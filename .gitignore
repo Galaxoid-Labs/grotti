@@ -1,0 +1,31 @@
+# Compiled Odin binaries (executables have no extension, so list the ones we build).
+/grotti
+/grotti_bin
+*.bin
+*.exe
+*.o
+*.obj
+*.pdb
+*.dSYM/
+
+# Harness binaries, if built into their package dirs instead of elsewhere.
+/cli/cli
+/demo/demo
+/bench/bench
+/capture/capture
+/cuda/probe/probe
+/cuda/kerneltest/kerneltest
+
+# NOTE: cuda/kernel.cubin is intentionally COMMITTED — the binary embeds it via
+# #load at build time, so a CPU-only checkout builds without the CUDA toolkit.
+# Do not add it here. Ignore only stray/alternate cubins:
+/cuda/*.ptx
+
+# Editor / OS noise.
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/

@@ -1,0 +1,224 @@
+package main
+
+// grotti — the CLI. Wires Fenja (the stratum client), the threaded CPU engine, the
+// governor, and the console together into the `grotti` binary.
+//
+// Defaults are deliberately gentle: a modest thread count and a cap well below the
+// (conservatively estimated) network hashrate, so a bare `grotti` cannot peg the
+// machine or overwhelm the chain. Uncapping, or a cap above network, requires an
+// explicit opt-in (CLAUDE.md invariant #2, #2c).
+
+import grotti ".."
+import cuda "../cuda"
+import "base:intrinsics"
+import "core:flags"
+import "core:fmt"
+import "core:os"
+import "core:strings"
+import "core:sync"
+import "core:sys/posix"
+import "core:thread"
+import "core:time"
+
+Options :: struct {
+	pool:    string `usage:"pool host:port"`,
+	user:    string `usage:"stratum username: <thunder-addr>.<rig>"`,
+	backend: string `usage:"cpu | cuda | cpu,cuda (default cpu — never auto-selects GPU)"`,
+	threads: int    `usage:"number of CPU worker threads"`,
+	cap:     f64    `usage:"hashrate cap in H/s (0 = uncapped)"`,
+	color:   string `usage:"color output: auto | always | never"`,
+}
+
+GPU_EST_HPS :: 2.56e9 // measured GB10 rate; used for the cap split when running both
+
+PER_THREAD_HPS :: 8.41e6 // measured single-thread SIMD rate; used only for a CPU estimate
+
+g_quit: u32 // atomic; SIGINT sets it, stopping Fenja and every worker
+g_console: grotti.Console
+g_print: sync.Mutex // serialize stdout across the Fenja and main threads
+g_net_logged: bool // log the real network difficulty once, on the first job
+
+sigint_handler :: proc "c" (sig: posix.Signal) {
+	intrinsics.atomic_store_explicit(&g_quit, 1, .Release)
+}
+
+main :: proc() {
+	opts := Options {
+		pool    = "pool.drivechain.info:3334",
+		user    = "4C8nSSdfsAFJM9zb2m5mJvvSRN2Y.grotti1",
+		backend = "cpu",
+		threads = 4,
+		cap     = 500_000,
+		color   = "auto",
+	}
+	flags.parse_or_exit(&opts, os.args)
+
+	run_cpu := strings.contains(opts.backend, "cpu")
+	run_cuda := strings.contains(opts.backend, "cuda")
+	if !run_cpu && !run_cuda {
+		fmt.eprintln("no backend selected (use -backend:cpu|cuda|cpu,cuda)")
+		return
+	}
+	if run_cuda && !grotti.gpu_available() {
+		fmt.eprintln("cuda backend requested but no CUDA device is available")
+		return
+	}
+
+	mode := grotti.Color_Mode.Auto
+	switch opts.color {
+	case "always":
+		mode = .Always
+	case "never":
+		mode = .Never
+	}
+	g_console = grotti.console_init(mode)
+
+	fmt.printfln("grotti 0.1.0  ·  backend=%s  ·  pool=%s", opts.backend, opts.pool)
+	if run_cuda {
+		info := cuda.cuda_probe()
+		fmt.printfln("gpu: %s  ·  compute %d.%d  ·  %d SMs", cuda.device_name(&info), info.cc_major, info.cc_minor, info.mp_count)
+	}
+
+	// The cap is a resource/courtesy throttle, not a chain-safety gate — on this chain
+	// (difficulty ~133k) even the GPU is a small fraction of the network.
+	if opts.cap <= 0 {
+		fmt.println("cap: uncapped")
+	} else {
+		rate := strings.builder_make(context.temp_allocator)
+		grotti.human_hps(&rate, opts.cap)
+		fmt.printfln("cap: %s (global, split across backends)  ·  raise with -cap", strings.to_string(rate))
+	}
+	fmt.println()
+
+	posix.signal(posix.Signal(posix.SIGINT), sigint_handler)
+
+	// Wiring.
+	ring := new(grotti.Job_Ring)
+	shares := new(grotti.Share_Queue)
+	grotti.share_queue_init(shares)
+	st := new(grotti.Stats)
+	grotti.stats_init(st)
+
+	fenja := new(grotti.Fenja)
+	fenja.ring = ring
+	fenja.shares = shares
+	fenja.stats = st
+	fenja.quit = &g_quit
+	fenja.pool_addr = opts.pool
+	fenja.auth_user = opts.user
+	fenja.on_event = on_event
+	fenja.on_difficulty = on_difficulty
+	fenja.on_job = on_job
+	fenja.on_authorized = on_authorized
+	fenja.on_share_result = on_share_result
+	fenja.on_block = on_block
+
+	ft := thread.create(fenja_thread_proc)
+	ft.data = fenja
+	thread.start(ft)
+
+	// Split the global cap across the selected backends by their estimated rate, so
+	// the total lands on -cap. Uncapped (cap<=0) passes through to both.
+	cpu_w := run_cpu ? f64(opts.threads) * PER_THREAD_HPS : 0
+	gpu_w := run_cuda ? GPU_EST_HPS : 0
+	total_w := cpu_w + gpu_w
+	cpu_cap := opts.cap
+	gpu_cap := opts.cap
+	if opts.cap > 0 && total_w > 0 {
+		cpu_cap = opts.cap * cpu_w / total_w
+		gpu_cap = opts.cap * gpu_w / total_w
+	}
+
+	miner: ^grotti.Miner
+	gpu: ^grotti.GPU_Miner
+	if run_cpu {
+		miner = grotti.mine_start(ring, shares, st, opts.threads, cpu_cap, &g_quit)
+	}
+	if run_cuda {
+		// GPU en2 id starts past the CPU worker ids so the two never collide.
+		gpu = grotti.gpu_mine_start(ring, shares, st, opts.threads, gpu_cap, &g_quit)
+	}
+
+	// Live status until Ctrl-C.
+	sampler: grotti.Rate_Sampler
+	grotti.rate_sampler_init(&sampler, st)
+	say("mining — press Ctrl-C to stop")
+	for intrinsics.atomic_load_explicit(&g_quit, .Acquire) == 0 {
+		time.sleep(2 * time.Second)
+		if intrinsics.atomic_load_explicit(&g_quit, .Acquire) != 0 {
+			break
+		}
+		hps := grotti.rate_sample(&sampler, st)
+		snap := grotti.stats_snapshot(st)
+		gov := opts.cap > 0 ? hps / opts.cap : -1 // -1 → "gov —" when uncapped
+		line := strings.builder_make(context.temp_allocator)
+		grotti.format_status(&line, g_console, snap, hps, gov, "")
+		say(strings.to_string(line))
+		free_all(context.temp_allocator)
+	}
+
+	fmt.println("\nstopping ...")
+	if miner != nil {
+		grotti.mine_stop(miner)
+	}
+	if gpu != nil {
+		grotti.gpu_mine_stop(gpu)
+	}
+	thread.join(ft)
+	snap := grotti.stats_snapshot(st)
+	fmt.printfln(
+		"done — %.0f hashes, %d accepted, %d rejected, up %.0fs",
+		f64(snap.hashes),
+		snap.accepted,
+		snap.rejected,
+		snap.uptime_s,
+	)
+}
+
+fenja_thread_proc :: proc(t: ^thread.Thread) {
+	grotti.fenja_run(cast(^grotti.Fenja)t.data)
+}
+
+// say prints one already-built line, serialized so the Fenja and main threads never
+// interleave mid-line.
+say :: proc(line: string) {
+	sync.lock(&g_print)
+	fmt.println(line)
+	sync.unlock(&g_print)
+}
+
+log_line :: proc(code, tag, msg: string) {
+	h, m, s := grotti.wall_clock()
+	b := strings.builder_make(context.temp_allocator)
+	grotti.format_event(&b, g_console, h, m, s, code, tag, msg)
+	say(strings.to_string(b))
+}
+
+// --- Fenja logging hooks (run on the Fenja thread) --------------------------
+
+on_event :: proc(f: ^grotti.Fenja, msg: string) {
+	log_line(grotti.CYAN, "song", msg)
+}
+on_difficulty :: proc(f: ^grotti.Fenja, diff: f64) {
+	log_line(grotti.YELLOW, "diff", fmt.tprintf("set %.0f", diff))
+}
+on_job :: proc(f: ^grotti.Fenja, job: ^grotti.Job) {
+	if !g_net_logged {
+		g_net_logged = true
+		log_line(
+			grotti.DIM,
+			"net",
+			fmt.tprintf("network difficulty %.0f  (nbits %08x)", grotti.difficulty_from_nbits(job.nbits), job.nbits),
+		)
+	}
+	log_line(grotti.DIM, "job", fmt.tprintf("%s%s", grotti.job_id(job), job.clean ? "  clean" : ""))
+}
+on_authorized :: proc(f: ^grotti.Fenja, ok: bool) {
+	log_line(ok ? grotti.GREEN : grotti.BOLD_RED, "song", ok ? "authorized" : "authorize FAILED")
+}
+on_share_result :: proc(f: ^grotti.Fenja, id: int, accepted: bool) {
+	log_line(accepted ? grotti.GREEN : grotti.RED, "share", accepted ? "✔ accepted" : "✘ rejected")
+}
+on_block :: proc(f: ^grotti.Fenja, sh: ^grotti.Share) {
+	log_line(grotti.BOLD_GREEN, "BLOCK", fmt.tprintf("🎉 BLOCK FOUND — nonce %08x (submitting)", sh.nonce))
+}
