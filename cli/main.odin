@@ -44,6 +44,13 @@ sigint_handler :: proc "c" (sig: posix.Signal) {
 }
 
 main :: proc() {
+	// `core:flags` only knows the flag struct, not our subcommands, so we handle help
+	// ourselves to make `keygen` discoverable.
+	if wants_help(os.args) {
+		print_help()
+		return
+	}
+
 	// Subcommand: `grotti keygen` mints a Thunder wallet; `grotti keygen "<12 words>"`
 	// recovers its first address. Offline — no node, no pool.
 	if len(os.args) >= 2 && os.args[1] == "keygen" {
@@ -214,6 +221,37 @@ main :: proc() {
 
 fenja_thread_proc :: proc(t: ^thread.Thread) {
 	grotti.fenja_run(cast(^grotti.Fenja)t.data)
+}
+
+wants_help :: proc(args: []string) -> bool {
+	for a in args[1:] {
+		switch a {
+		case "-help", "--help", "-h", "help":
+			return true
+		}
+	}
+	return false
+}
+
+print_help :: proc() {
+	fmt.println("grotti — a Stratum V1 CPU/GPU miner (drivechain / simplepool)")
+	fmt.println()
+	fmt.println("USAGE")
+	fmt.println("  grotti [flags]                 mine (requires -user, or `user` in grotti.conf)")
+	fmt.println("  grotti keygen                  generate a new Thunder wallet (mnemonic + address)")
+	fmt.println("  grotti keygen \"<12 words>\"     recover the address for a mnemonic")
+	fmt.println("  grotti -help                   show this help")
+	fmt.println()
+	fmt.println("FLAGS")
+	fmt.println("  -pool:ENDPOINT   host:port or stratum+tcp://host:port   (default pool.drivechain.info:3334)")
+	fmt.println("  -user:ADDR.RIG   stratum username <thunder-addr>.<rig>  (required)")
+	fmt.println("  -backend:LIST    cpu | cuda | cpu,cuda                   (default cpu; never auto-selects GPU)")
+	fmt.println("  -threads:N       CPU worker threads                     (default 4)")
+	fmt.println("  -cap:N           0=uncapped · 1-100=percent · >100=H/s   (default 500000)")
+	fmt.println("  -color:MODE      auto | always | never                  (default auto)")
+	fmt.println()
+	fmt.println("CONFIG")
+	fmt.println("  grotti.conf (INI, next to the binary) sets defaults; flags override it.")
 }
 
 // run_keygen: with words, recover an address; without, generate a new wallet.
