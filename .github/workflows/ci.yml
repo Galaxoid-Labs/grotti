@@ -20,7 +20,8 @@ jobs:
           - { runner: ubuntu-24.04, arch: linux-x86_64 }
           - { runner: ubuntu-24.04-arm, arch: linux-arm64 } # for GB10-class ARM boxes
           - { runner: windows-latest, arch: windows-x86_64, ext: .exe } # native build + first real Windows check (CPU + Vulkan backends; CUDA is Linux-only)
-          - { runner: macos-latest, arch: macos-arm64 } # Apple Silicon; CPU + Metal backends (odin test . exercises Metal if the runner exposes a GPU, else skips)
+    # macOS is a separate job (build-macos) because it ships a single UNIVERSAL binary
+    # (arm64 + x86_64 via lipo) rather than one artifact per arch.
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
@@ -60,10 +61,51 @@ jobs:
   # fatbin manually if you edit cuda/kernel.cu — the command is in README / kernel.cu
   # (needs CUDA 13 for sm_121, but no GPU).
 
+  # macOS: one UNIVERSAL binary that runs natively on Apple Silicon AND Intel. The arm64
+  # runner builds its native arm64 slice and cross-builds the x86_64 slice (verified to link
+  # against Metal.framework from an arm64 host), then `lipo` fuses them. Tests run natively on
+  # arm64; the Metal worker test self-skips on the runner's virtualized "Apple Paravirtual"
+  # GPU. (Native x86_64 test *execution* isn't covered here — the x86_64 slice is
+  # cross-compiled and link-checked; add a macos-13 test-only job if that coverage is wanted.)
+  build-macos:
+    name: test + build (macos-universal)
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '0.1.0-dev' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Odin
+        uses: laytan/setup-odin@v2
+        with:
+          release: nightly
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Test (native arm64)
+        run: |
+          odin test .
+          odin test sha256d
+          odin test keygen
+
+      - name: Build universal (arm64 + x86_64)
+        run: |
+          odin build cli -target:darwin_arm64 -out:grotti-arm64 -o:speed -define:GROTTI_VERSION=$VERSION
+          odin build cli -target:darwin_amd64 -out:grotti-amd64 -o:speed -define:GROTTI_VERSION=$VERSION
+          lipo -create grotti-arm64 grotti-amd64 -output grotti-macos-universal
+          lipo -info grotti-macos-universal
+
+      - name: Smoke-check (prints usage, exits — no pool, no GPU)
+        run: ./grotti-macos-universal -help || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grotti-macos-universal
+          path: grotti-macos-universal
+
   release:
     name: release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, build-macos]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4

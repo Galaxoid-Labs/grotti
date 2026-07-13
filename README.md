@@ -224,9 +224,10 @@ loader picks its driver per-OS — `libcuda.so.1` on Linux, `nvcuda.dll` on Wind
 path is cross-checked, not yet run); Vulkan also drives the NVIDIA card on Windows. A native
 Windows `.exe` links on a Windows host (Odin can't cross-link one from Linux, though it
 type-checks the target), so CI builds it on a `windows-latest` runner. `.github/workflows/ci.yml`
-tests and builds `grotti` for **`linux-x86_64`, `linux-arm64`, `windows-x86_64`, and
-`macos-arm64`** on every push and publishes all four on a `v*` tag. See `CLAUDE.md` § Windows
-and § macOS / Metal for first-run checklists.
+tests and builds `grotti` for **`linux-x86_64`, `linux-arm64`, `windows-x86_64`, and a
+`macos-universal`** binary (a single Mac executable fusing arm64 + x86_64 via `lipo`, so one
+download runs natively on both Apple Silicon and Intel), publishing all four on a `v*` tag. See
+`CLAUDE.md` § Windows and § macOS / Metal for first-run checklists.
 
 ---
 
