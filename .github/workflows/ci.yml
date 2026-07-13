@@ -21,7 +21,7 @@ jobs:
           - { runner: ubuntu-24.04-arm, arch: linux-arm64 } # for GB10-class ARM boxes
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Odin only — NO CUDA toolkit and NO GPU are needed to build a GPU-capable
       # binary: the CUDA driver is dlopen'd at runtime, and the kernel is embedded
