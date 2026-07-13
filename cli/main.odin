@@ -21,6 +21,10 @@ import "core:sys/posix"
 import "core:thread"
 import "core:time"
 
+// VERSION is the single source of truth. CI stamps the git tag at build time via
+// `-define:GROTTI_VERSION=...`; otherwise it defaults here.
+VERSION :: #config(GROTTI_VERSION, "0.1.0")
+
 Options :: struct {
 	pool:    string `usage:"pool host:port"`,
 	user:    string `usage:"stratum username: <thunder-addr>.<rig> (required)"`,
@@ -46,6 +50,10 @@ sigint_handler :: proc "c" (sig: posix.Signal) {
 main :: proc() {
 	// `core:flags` only knows the flag struct, not our subcommands, so we handle help
 	// ourselves to make `keygen` discoverable.
+	if wants_version(os.args) {
+		fmt.printfln("grotti %s", VERSION)
+		return
+	}
 	if wants_help(os.args) {
 		print_help()
 		return
@@ -96,7 +104,7 @@ main :: proc() {
 	}
 	g_console = grotti.console_init(mode)
 
-	fmt.printfln("grotti 0.1.0  ·  backend=%s  ·  pool=%s", opts.backend, pool_addr)
+	fmt.printfln("grotti %s  ·  backend=%s  ·  pool=%s", VERSION, opts.backend, pool_addr)
 	if conf_loaded {
 		fmt.printfln("config: %s", conf_path)
 	}
@@ -245,13 +253,24 @@ wants_help :: proc(args: []string) -> bool {
 	return false
 }
 
+wants_version :: proc(args: []string) -> bool {
+	for a in args[1:] {
+		switch a {
+		case "-version", "--version", "version":
+			return true
+		}
+	}
+	return false
+}
+
 print_help :: proc() {
-	fmt.println("grotti — a Stratum V1 CPU/GPU miner (drivechain / simplepool)")
+	fmt.printfln("grotti %s — a Stratum V1 CPU/GPU miner (drivechain / simplepool)", VERSION)
 	fmt.println()
 	fmt.println("USAGE")
 	fmt.println("  grotti [flags]                 mine (requires -user, or `user` in grotti.conf)")
 	fmt.println("  grotti keygen                  generate a new Thunder wallet (mnemonic + address)")
 	fmt.println("  grotti keygen \"<12 words>\"     recover the address for a mnemonic")
+	fmt.println("  grotti version                 print the version")
 	fmt.println("  grotti -help                   show this help")
 	fmt.println()
 	fmt.println("FLAGS")
