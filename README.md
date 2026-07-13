@@ -58,20 +58,22 @@ odin build cli -out:grotti -o:speed     # -o:speed is mandatory for hashrate
 
 ## Quick start
 
-You need a Thunder address for `-user` (generate one with `./grotti keygen` — see
-below). Then:
+You need a **pool endpoint** for `-pool` and a Thunder address for `-user` (generate one
+with `./grotti keygen` — see below). Then:
 
 ```sh
-./grotti -user:<thunder-addr>.<rig>      # gentle defaults: 4 threads, 500 KH/s cap
+./grotti -pool:pool.drivechain.info:3334 -user:<thunder-addr>.<rig>   # gentle defaults: 4 threads, 500 KH/s cap
 ```
 
-Or put `user` (and anything else) in a `grotti.conf` next to the binary and just run
-`./grotti`. Grotti **refuses to start without a username** — no address is baked in.
-Press **Ctrl-C** to stop cleanly.
+Or put `pool` and `user` (and anything else) in a `grotti.conf` next to the binary and just
+run `./grotti`. Grotti **refuses to start without both a pool and a username** — nothing is
+baked in. Press **Ctrl-C** to stop cleanly.
 
 ### Examples
 
 ```sh
+# These assume `pool` and `user` are set in grotti.conf; otherwise add -pool:… and -user:… too.
+
 # GPU at 25% — just give -cap a percentage
 ./grotti -backend:cuda -cap:25
 
@@ -106,7 +108,7 @@ Press **Ctrl-C** to stop cleanly.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-pool:ENDPOINT` | `pool.drivechain.info:3334` | stratum pool — `host:port` or `stratum+tcp://host:port` |
+| `-pool:ENDPOINT` | **required** | stratum pool — `host:port` or `stratum+tcp://host:port` (or set in `grotti.conf`) |
 | `-user:addr.rig` | **required** | `<thunder-addr>.<rig>` for `mining.authorize` (or set in `grotti.conf`) |
 | `-backend:LIST` | `cpu` | `cpu` \| `cuda` \| `vulkan` \| comma-combo — never auto-selects the GPU |
 | `-threads:N` | `4` | CPU worker threads |

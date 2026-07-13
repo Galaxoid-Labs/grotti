@@ -26,7 +26,7 @@ import "core:time"
 VERSION :: #config(GROTTI_VERSION, "0.1.0")
 
 Options :: struct {
-	pool:    string `usage:"pool host:port"`,
+	pool:    string `usage:"pool host:port (required)"`,
 	user:    string `usage:"stratum username: <thunder-addr>.<rig> (required)"`,
 	backend: string `usage:"cpu | cuda | vulkan | comma-combo (default cpu — never auto-selects GPU)"`,
 	threads: int    `usage:"number of CPU worker threads"`,
@@ -69,7 +69,7 @@ main :: proc() {
 	}
 
 	opts := Options {
-		pool    = "pool.drivechain.info:3334",
+		pool    = "", // required — no default; must come from -pool or grotti.conf
 		user    = "", // required — no default; must come from -user or grotti.conf
 		backend = "cpu",
 		threads = 4,
@@ -78,6 +78,11 @@ main :: proc() {
 	}
 	conf_path, conf_loaded := load_conf(&opts) // grotti.conf overrides defaults...
 	flags.parse_or_exit(&opts, os.args) // ...and CLI flags override the conf
+	if opts.pool == "" {
+		fmt.eprintln("no pool endpoint set.")
+		fmt.eprintln("pass -pool:<host:port> (or stratum+tcp://host:port), or set `pool` in grotti.conf.")
+		return
+	}
 	pool_addr := normalize_pool(opts.pool)
 
 	run_cpu := strings.contains(opts.backend, "cpu")
@@ -298,14 +303,14 @@ print_help :: proc() {
 	fmt.printfln("grotti %s — a Stratum V1 CPU/GPU miner (drivechain / simplepool)", VERSION)
 	fmt.println()
 	fmt.println("USAGE")
-	fmt.println("  grotti [flags]                 mine (requires -user, or `user` in grotti.conf)")
+	fmt.println("  grotti [flags]                 mine (requires -pool and -user, or set in grotti.conf)")
 	fmt.println("  grotti keygen                  generate a new Thunder wallet (mnemonic + address)")
 	fmt.println("  grotti keygen \"<12 words>\"     recover the address for a mnemonic")
 	fmt.println("  grotti version                 print the version")
 	fmt.println("  grotti -help                   show this help")
 	fmt.println()
 	fmt.println("FLAGS")
-	fmt.println("  -pool:ENDPOINT   host:port or stratum+tcp://host:port   (default pool.drivechain.info:3334)")
+	fmt.println("  -pool:ENDPOINT   host:port or stratum+tcp://host:port   (required)")
 	fmt.println("  -user:ADDR.RIG   stratum username <thunder-addr>.<rig>  (required)")
 	fmt.println("  -backend:LIST    cpu | cuda | vulkan | comma-combo        (default cpu; never auto-selects GPU)")
 	fmt.println("  -threads:N       CPU worker threads                     (default 4)")
