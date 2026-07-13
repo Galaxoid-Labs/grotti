@@ -149,7 +149,7 @@ human_duration :: proc(b: ^strings.Builder, seconds: f64) {
 // format_status builds the repainting status line (no newline; the caller prefixes
 // '\r' on a TTY). The hashrate is the headline number (bold cyan). `eta`, if given,
 // is an already-formatted expected-time note (e.g. "share ~7m · block ~2.5d").
-format_status :: proc(b: ^strings.Builder, c: Console, snap: Snapshot, hps: f64, gov_util: f64, job: string, eta := "") {
+format_status :: proc(b: ^strings.Builder, c: Console, snap: Snapshot, hps: f64, job: string, eta := "") {
 	strings.write_string(b, "◆ ")
 	rate := strings.builder_make()
 	defer strings.builder_destroy(&rate)
@@ -162,11 +162,6 @@ format_status :: proc(b: ^strings.Builder, c: Console, snap: Snapshot, hps: f64,
 	paint(b, c.color, snap.rejected > 0 ? RED : DIM, fmt.tprintf("%d✘", snap.rejected))
 	fmt.sbprintf(b, " (%.1f%%)", 100 * stats_acceptance_rate(snap))
 
-	if gov_util < 0 {
-		strings.write_string(b, "  ·  gov —")
-	} else {
-		fmt.sbprintf(b, "  ·  gov %.1f%%", 100 * gov_util)
-	}
 	fmt.sbprintf(b, "  ·  up %s", _hms(snap.uptime_s))
 	if len(job) > 0 {
 		fmt.sbprintf(b, "  ·  job %s", job)

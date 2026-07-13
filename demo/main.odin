@@ -77,7 +77,7 @@ main :: proc() {
 		snap := grotti.stats_snapshot(&st)
 
 		line := strings.builder_make();defer strings.builder_destroy(&line)
-		grotti.format_status(&line, c, snap, hps, hps / CAP, grotti.job_id(&job))
+		grotti.format_status(&line, c, snap, hps, grotti.job_id(&job))
 		if c.tty {
 			fmt.print("\r", strings.to_string(line))
 		} else {
