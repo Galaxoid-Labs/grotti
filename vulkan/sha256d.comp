@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_control_flow_attributes : require
 
 // Grotti SHA-256d compute shader — the GLSL twin of cuda/kernel.cu, compiled OFFLINE to
 // SPIR-V (sha256d.spv) and embedded via #load. It is validated against sha256d (scalar)
@@ -9,13 +10,14 @@
 // Compile (one-time, build machine only — the .spv is committed):
 //   glslangValidator -V sha256d.comp -o sha256d.spv
 //
-// PERF (not a correctness issue): measured ~0.86 GH/s on the GB10 vs 2.56 GH/s for the
-// CUDA kernel — the shader is compute-bound (a launch-size sweep in vulkan/bench shows flat
-// throughput, so it is NOT per-submit overhead). The 64-round loop + rolling 16-word
-// schedule needs FULL unrolling so w[] indices fold to constants and live in registers, as
-// the CUDA kernel's #pragma unroll + __launch_bounds__ achieves. glslang does not unroll it
-// and `spirv-opt -O --loop-unroll` did not help (slightly worse), so the fix is a manual
-// rewrite: unroll the rounds and give the schedule named registers. Follow-on, not bring-up.
+// PERF: ~1.78 GH/s on the GB10 (~70% of the 2.56 GH/s CUDA kernel), up from ~0.86 before
+// the schedule was unrolled. The [[unroll]] attributes below (GL_EXT_control_flow_attributes)
+// fold every w[i & 15] index to a compile-time constant, so glslang scalar-replaces the
+// 16-word schedule into registers instead of local memory — the register-resident schedule
+// the CUDA kernel gets from #pragma unroll. glslang does not unroll on its own, and
+// `spirv-opt -O --loop-unroll` did not help. The remaining gap vs CUDA is the driver's
+// SPIR-V→SASS compiler vs nvcc plus the lack of LOP3 / __launch_bounds__ control; further
+// gains would need subgroup-size / occupancy tuning.
 
 layout(local_size_x = 256) in;
 
@@ -64,7 +66,11 @@ uint bswap(uint x) {
 void sha256_block(inout uint st[8], inout uint w[16]) {
 	uint a = st[0], b = st[1], c = st[2], d = st[3];
 	uint e = st[4], f = st[5], g = st[6], h = st[7];
-	for (int i = 0; i < 64; i++) {
+	// Full unroll: with i constant, every w[i & 15] index folds to a compile-time
+	// constant, so the 16-word schedule is scalar-replaced into registers rather than
+	// living in local memory — the register-resident schedule the CUDA kernel gets from
+	// #pragma unroll. This is the single biggest throughput lever for this shader.
+	[[unroll]] for (int i = 0; i < 64; i++) {
 		uint wi;
 		if (i < 16) {
 			wi = w[i];
@@ -88,7 +94,7 @@ void main() {
 	// Block B from the midstate. W3 is the nonce word: the header stores the nonce
 	// little-endian, so the big-endian message word is bswap(nonce).
 	uint s[8];
-	for (int i = 0; i < 8; i++) s[i] = pc.midstate[i];
+	[[unroll]] for (int i = 0; i < 8; i++) s[i] = pc.midstate[i];
 	uint w[16] = uint[](
 		pc.w0, pc.w1, pc.w2, bswap(nonce),
 		0x80000000u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 640u
@@ -110,7 +116,7 @@ void main() {
 	// compare to the target word by word, MSW first (invariant: fractional-diff safe —
 	// the target's leading word may be nonzero on this chain).
 	bool below = false;
-	for (int i = 0; i < 8; i++) {
+	[[unroll]] for (int i = 0; i < 8; i++) {
 		uint dw = bswap(s2[7 - i]);
 		uint tw = pc.target[i];
 		if (dw != tw) { below = dw < tw; break; }

@@ -28,7 +28,7 @@ dependency; runs on a box with no GPU.
 |---|---|---|---|
 | **v1** | `cpu` | — | Pure Odin, scalar → midstate → SIMD. **Default. Done.** |
 | **v2** | `cuda` | `libcuda.so.1` | NVIDIA / GB10. **Done — ~2.6 GH/s.** (`cuda/`) |
-| **v2** | `vulkan` | `libvulkan.so.1` | Portable (NVIDIA/AMD/Intel). `vendor:vulkan`. **Bring-up done — correct, ~0.86 GH/s on GB10; shader perf pending.** (`vulkan/`) |
+| **v2** | `vulkan` | `libvulkan.so.1` | Portable (NVIDIA/AMD/Intel). `vendor:vulkan`. **Done — correct, ~1.78 GH/s on GB10 (~70% of CUDA).** (`vulkan/`) |
 | *opt* | `metal` | `Metal.framework` | macOS / Apple Silicon. Roadmap (DEVELOPMENT.md § Phase 9). |
 | *opt* | `opencl` | `libOpenCL.so.1` | Widest reach. Optional. Not started. |
 

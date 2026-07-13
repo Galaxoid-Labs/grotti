@@ -36,12 +36,11 @@ Options :: struct {
 
 GPU_EST_HPS :: 2.56e9 // measured GB10 rate (CUDA); used for the cap split when running both
 
-// VK_EST_HPS is the MEASURED GB10-via-Vulkan rate (vulkan/bench), used only to resolve a
-// percentage -cap and split a global cap across backends; a raw-H/s cap is unaffected. Note
-// this is ~1/3 of the CUDA path (2.56 GH/s): the bring-up shader is compute-bound because
-// its SHA schedule is not register-resident. Closing that gap is a shader-optimization
-// follow-on (see sha256d.comp PERF note); update this constant when it lands.
-VK_EST_HPS :: 0.86e9
+// VK_EST_HPS is the MEASURED GB10-via-Vulkan rate (vulkan/bench at VK_LAUNCH), used only to
+// resolve a percentage -cap and split a global cap across backends; a raw-H/s cap is
+// unaffected. ~70% of the CUDA path (2.56 GH/s) after the shader's SHA schedule was made
+// register-resident (see vulkan/sha256d.comp PERF note).
+VK_EST_HPS :: 1.78e9
 
 PER_THREAD_HPS :: 8.41e6 // measured single-thread SIMD rate; used only for a CPU estimate
 

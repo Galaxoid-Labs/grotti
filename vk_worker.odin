@@ -24,7 +24,11 @@ import "core:time"
 @(private)
 SPV := #load("vulkan/sha256d.spv")
 
-VK_LAUNCH :: u32(1) << 22 // ~4.2M nonces per launch
+// ~16.8M nonces per launch (~9 ms of GB10 work). Larger than CUDA's 2^22 because Vulkan's
+// per-submit cost (record + fence round-trip) is heavier, so a bigger launch amortizes it —
+// a launch-size sweep in vulkan/bench shows throughput climbing from ~1.68 to ~1.9 GH/s as
+// the launch grows, plateauing here. Still small enough to stay responsive to new jobs/quit.
+VK_LAUNCH :: u32(1) << 24
 
 // VK_EN2_BASE keeps the Vulkan backend's extranonce2 stream disjoint from the CPU workers
 // (ids 0..threads-1) AND the CUDA worker (id = threads). A wide separation means that even

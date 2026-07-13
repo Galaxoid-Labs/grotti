@@ -224,7 +224,7 @@ build dependency, runs fine on a machine with no GPU at all.
 |---|---|---|
 | `cpu` | — | Pure Odin. Always available. **The default.** |
 | `cuda` | `libcuda.so.1` | NVIDIA. Best perf on GB10. First GPU backend. |
-| `vulkan` | `libvulkan.so.1` | Portable (NVIDIA/AMD/Intel). `vendor:vulkan`. **Bring-up done** — correct + integrated, ~0.86 GH/s on GB10; shader perf pending. |
+| `vulkan` | `libvulkan.so.1` | Portable (NVIDIA/AMD/Intel). `vendor:vulkan`. **Done** — correct + integrated, ~1.78 GH/s on GB10 (~70% of CUDA). |
 | `opencl` | `libOpenCL.so.1` | Widest reach; proven reference kernels exist. Optional. |
 
 ### Runtime loading — `core:dynlib`, not `foreign import`
@@ -304,9 +304,10 @@ just effort-per-hash:
   and gives up hand-tuned `LOP3` — but runs on anything. Worth having, worth
   having *second*. **Now done (bring-up):** `vulkan/` mirrors `cuda/`'s Engine
   API, picks the fastest device, drains multi-hits, and is differentially tested.
-  Measured ~0.86 GH/s on GB10 vs 2.6 for CUDA — compute-bound on the un-unrolled
-  SHA schedule (glslang won't unroll it; `spirv-opt` didn't help). Perf follow-on:
-  hand-unroll the 64 rounds so the 16-word schedule is register-resident.
+  Measured ~1.78 GH/s on GB10 vs 2.6 for CUDA (~70%), after unrolling the 64
+  rounds via `GL_EXT_control_flow_attributes` `[[unroll]]` so the 16-word schedule
+  is scalar-replaced into registers (glslang won't unroll on its own; `spirv-opt`
+  didn't help). Remaining gap: SPIR-V→SASS vs nvcc + no LOP3/`__launch_bounds__`.
 - **OpenCL** is mostly interesting because the old cgminer kernels
   (`poclbm`/`phatk` lineage) are proven reference code. Optional.
 

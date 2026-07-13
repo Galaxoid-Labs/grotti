@@ -14,10 +14,9 @@ test network.
 receives real jobs, hashes them under a hashrate governor, submits shares, and flags a
 found block. The CPU SIMD engine does ~8.4 MH/s per thread; the CUDA backend does
 ~2.6 GH/s on an NVIDIA GB10. A portable **Vulkan** backend (NVIDIA/AMD/Intel) is wired in
-and correct — ~0.86 GH/s on the same GB10 today, with a bring-up shader whose SHA
-schedule is not yet register-resident (perf tuning is a tracked follow-on). 56 tests
-pass, and the CPU, CUDA, and Vulkan hashers are each differentially tested against
-`core:crypto/sha2` / the CPU scan.
+and correct — ~1.78 GH/s on the same GB10 (~70% of the CUDA path, after the shader's SHA
+schedule was made register-resident). 56 tests pass, and the CPU, CUDA, and Vulkan hashers
+are each differentially tested against `core:crypto/sha2` / the CPU scan.
 
 ---
 
@@ -140,9 +139,9 @@ produces a Vulkan-capable binary with no shader toolchain. Rebuild it only if yo
 ```sh
 cd vulkan && glslangValidator -V sha256d.comp -o sha256d.spv
 ```
-The Vulkan path is correct (differentially tested) but currently ~1/3 of CUDA on the same
-GB10 — the bring-up shader is compute-bound because its SHA message schedule isn't kept in
-registers; closing that gap is a tracked follow-on.
+The Vulkan path is correct (differentially tested) and runs at ~1.78 GH/s on the GB10 —
+about 70% of the CUDA kernel. The remaining gap is the driver's SPIR-V→SASS compiler vs
+nvcc plus the lack of hand-tuned `LOP3`; further gains would need subgroup/occupancy tuning.
 
 **Portability / CI:** the CPU and Vulkan backends are cross-platform. The only OS-specific
 code (TTY detection + color enabling, Ctrl-C) lives in per-OS files, and the tree
