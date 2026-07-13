@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="grotti_icon.png" alt="Grotti" width="200">
+</p>
+
 # Grotti
 
 A Stratum V1 miner in pure Odin — CPU (SIMD), NVIDIA GPU (CUDA), portable GPU (Vulkan),
