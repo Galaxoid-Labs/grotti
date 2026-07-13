@@ -7,8 +7,16 @@
 //      spill. Full-unrolled, __launch_bounds__ to keep registers in check.
 // Still validated against the scalar CPU hasher and a known block (kerneltest).
 //
-// Build (compute capability 12.1 = GB10):
-//   nvcc -cubin -arch=sm_121 kernel.cu -o kernel.cubin
+// Build a PORTABLE fatbin (native SASS for Turing..Blackwell + compute_75 PTX so the
+// driver can JIT anything else >= 7.5). Needs CUDA 13 for sm_121 (GB10); no GPU:
+//   nvcc -fatbin \
+//     -gencode arch=compute_75,code=sm_75  -gencode arch=compute_80,code=sm_80 \
+//     -gencode arch=compute_86,code=sm_86  -gencode arch=compute_89,code=sm_89 \
+//     -gencode arch=compute_90,code=sm_90  -gencode arch=compute_100,code=sm_100 \
+//     -gencode arch=compute_120,code=sm_120 -gencode arch=compute_121,code=sm_121 \
+//     -gencode arch=compute_75,code=compute_75 \
+//     kernel.cu -o kernel.cubin
+// The file keeps the .cubin name but is a fatbin; cuModuleLoadData handles it.
 
 #include <stdint.h>
 

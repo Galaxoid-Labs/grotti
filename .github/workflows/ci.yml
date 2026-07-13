@@ -1,0 +1,97 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # the release job uploads assets
+
+jobs:
+  build:
+    name: test + build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: linux-x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: linux-arm64 } # for GB10-class ARM boxes
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Odin only — NO CUDA toolkit and NO GPU are needed to build a GPU-capable
+      # binary: the CUDA driver is dlopen'd at runtime, and the kernel is embedded
+      # from the committed portable fatbin (cuda/kernel.cubin). Pin `release` to a
+      # known-good Odin nightly for reproducible builds.
+      - name: Install Odin
+        uses: laytan/setup-odin@v2
+        with:
+          release: nightly
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Test
+        run: |
+          odin test .
+          odin test sha256d
+
+      - name: Build
+        run: odin build cli -out:grotti-${{ matrix.arch }} -o:speed
+
+      - name: Smoke-check (prints usage, exits — no pool, no GPU)
+        run: ./grotti-${{ matrix.arch }} -help || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grotti-${{ matrix.arch }}
+          path: grotti-${{ matrix.arch }}
+
+  # Best-effort: verify cuda/kernel.cu still compiles into the portable fatbin. Needs
+  # nvcc (CUDA 13, for Blackwell sm_121) but NOT a GPU. Does not gate the build — the
+  # committed fatbin is the source of truth; this just catches kernel.cu breakage.
+  kernel:
+    name: verify CUDA kernel compiles
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - name: Install git (for checkout in the CUDA container)
+        run: sudo apt-get update && sudo apt-get install -y git
+      - uses: actions/checkout@v4
+      - name: Install CUDA toolkit
+        uses: Jimver/cuda-toolkit@v0.2.24
+        with:
+          cuda: "13.0.0"
+          method: network
+          sub-packages: '["nvcc"]'
+      - name: Build portable fatbin
+        run: |
+          nvcc -fatbin \
+            -gencode arch=compute_75,code=sm_75 \
+            -gencode arch=compute_80,code=sm_80 \
+            -gencode arch=compute_86,code=sm_86 \
+            -gencode arch=compute_89,code=sm_89 \
+            -gencode arch=compute_90,code=sm_90 \
+            -gencode arch=compute_100,code=sm_100 \
+            -gencode arch=compute_120,code=sm_120 \
+            -gencode arch=compute_121,code=sm_121 \
+            -gencode arch=compute_75,code=compute_75 \
+            cuda/kernel.cu -o /tmp/kernel.cubin
+          ls -la /tmp/kernel.cubin
+
+  release:
+    name: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
+          generate_release_notes: true

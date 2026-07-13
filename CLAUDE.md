@@ -182,6 +182,16 @@ sees them and never needs to.
 `id: null`.** A strict request/response client will choke. This is the first
 thing to check in `netutils`.
 
+> **Generating a Thunder address (local dev note, not in the public README).**
+> The `<thunder-addr>` for `mining.authorize` is a base58-encoded 20-byte address:
+> `base58( blake3_xof( ed25519_pubkey )[0:20] )`, where the key comes from a BIP39
+> seed via the ed25519-HD path `m/1'/0'/0'/1'` (the first address a fresh wallet
+> hands out). Generate one **offline** (no node/RPC) with the example added to a
+> local `thunder-rust` checkout:
+> `cargo run -p thunder --example gen_address` (optionally `-- "<12-word mnemonic>"`
+> to recover). This lives in a personal `thunder-rust` fork, so it's kept out of the
+> public README. The wallet mnemonic is the user's secret — never request or store it.
+
 ### `mining.subscribe` reply
 
 ```

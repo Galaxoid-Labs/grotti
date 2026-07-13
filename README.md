@@ -75,19 +75,27 @@ network hashrate. Press **Ctrl-C** to stop cleanly.
 
 **GPU backend:** the CUDA driver is `dlopen`'d at runtime — no build-time CUDA
 dependency, and a GPU-less box runs fine. It's opt-in (`-backend:cuda`); a bare
-`./grotti` is always CPU. The GB10 does ~2.6 GH/s (~300× a CPU thread). The kernel is
-built to `cuda/kernel.cubin` (committed, embedded via `#load`); rebuild it only if you
-edit `cuda/kernel.cu`:
+`./grotti` is always CPU. The GB10 does ~2.6 GH/s (~300× a CPU thread).
+
+The kernel ships as a **committed, portable fatbin** at `cuda/kernel.cubin` (native
+SASS for Turing→Blackwell + `compute_75` PTX for JIT), embedded via `#load`. So
+`odin build` produces a GPU-capable binary **anywhere — no CUDA toolkit, no GPU** —
+and the GPU backend then runs on any NVIDIA card ≥ compute 7.5. Rebuild the fatbin
+only if you edit `cuda/kernel.cu` (needs CUDA 13 for `sm_121`, but no GPU):
 ```sh
-cd cuda && nvcc -cubin -arch=sm_121 kernel.cu -o kernel.cubin
+cd cuda && nvcc -fatbin \
+  -gencode arch=compute_75,code=sm_75  -gencode arch=compute_80,code=sm_80 \
+  -gencode arch=compute_86,code=sm_86  -gencode arch=compute_89,code=sm_89 \
+  -gencode arch=compute_90,code=sm_90  -gencode arch=compute_100,code=sm_100 \
+  -gencode arch=compute_120,code=sm_120 -gencode arch=compute_121,code=sm_121 \
+  -gencode arch=compute_75,code=compute_75 \
+  kernel.cu -o kernel.cubin
 ```
 
-Need a Thunder address? Generate one offline (no node) with the helper added to
-`thunder-rust`:
-
-```sh
-cd ../thunder-rust && cargo run -p thunder --example gen_address
-```
+**CI / releases:** `.github/workflows/ci.yml` tests and builds `grotti` for
+`linux-x86_64` and `linux-arm64` on every push (Odin only — it embeds the committed
+fatbin), and publishes both binaries as a GitHub Release on a `v*` tag. Currently
+**Linux-only** (`core:sys/posix`, `libcuda.so.1`); Windows/macOS would need porting.
 
 ---
 
