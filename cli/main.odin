@@ -10,6 +10,7 @@ package main
 
 import grotti ".."
 import cuda "../cuda"
+import keygen "../keygen"
 import "base:intrinsics"
 import "core:flags"
 import "core:fmt"
@@ -22,7 +23,7 @@ import "core:time"
 
 Options :: struct {
 	pool:    string `usage:"pool host:port"`,
-	user:    string `usage:"stratum username: <thunder-addr>.<rig>"`,
+	user:    string `usage:"stratum username: <thunder-addr>.<rig> (required)"`,
 	backend: string `usage:"cpu | cuda | cpu,cuda (default cpu — never auto-selects GPU)"`,
 	threads: int    `usage:"number of CPU worker threads"`,
 	cap:     f64    `usage:"cap: 0=uncapped, 1-100=percent of max (e.g. 25), >100=raw H/s"`,
@@ -43,9 +44,16 @@ sigint_handler :: proc "c" (sig: posix.Signal) {
 }
 
 main :: proc() {
+	// Subcommand: `grotti keygen` mints a Thunder wallet; `grotti keygen "<12 words>"`
+	// recovers its first address. Offline — no node, no pool.
+	if len(os.args) >= 2 && os.args[1] == "keygen" {
+		run_keygen(os.args[2:])
+		return
+	}
+
 	opts := Options {
 		pool    = "pool.drivechain.info:3334",
-		user    = "4C8nSSdfsAFJM9zb2m5mJvvSRN2Y.grotti1",
+		user    = "", // required — no default; must come from -user or grotti.conf
 		backend = "cpu",
 		threads = 4,
 		cap     = 500_000,
@@ -63,6 +71,12 @@ main :: proc() {
 	}
 	if run_cuda && !grotti.gpu_available() {
 		fmt.eprintln("cuda backend requested but no CUDA device is available")
+		return
+	}
+	if opts.user == "" {
+		fmt.eprintln("no stratum username set.")
+		fmt.eprintln("pass -user:<thunder-addr>.<rig>, or set `user` in grotti.conf.")
+		fmt.eprintln("no address? generate one with:  grotti keygen")
 		return
 	}
 
@@ -200,6 +214,20 @@ main :: proc() {
 
 fenja_thread_proc :: proc(t: ^thread.Thread) {
 	grotti.fenja_run(cast(^grotti.Fenja)t.data)
+}
+
+// run_keygen: with words, recover an address; without, generate a new wallet.
+run_keygen :: proc(args: []string) {
+	if len(args) > 0 {
+		mnemonic := strings.join(args, " ", context.temp_allocator)
+		fmt.printfln("mnemonic: %s", mnemonic)
+		fmt.printfln("address:  %s", keygen.address_from_mnemonic(mnemonic))
+		return
+	}
+	w := keygen.generate()
+	fmt.println("=== NEW Thunder wallet — save the mnemonic; it is the ONLY backup ===")
+	fmt.printfln("mnemonic: %s", w.mnemonic)
+	fmt.printfln("address:  %s", w.address)
 }
 
 // say prints one already-built line, serialized so the Fenja and main threads never

@@ -29,12 +29,16 @@ odin build cli -out:grotti -o:speed     # -o:speed is mandatory for hashrate
 
 ## Quick start
 
+You need a Thunder address for `-user` (generate one with `./grotti keygen` — see
+below). Then:
+
 ```sh
-./grotti                                 # gentle defaults: 4 threads, 500 KH/s cap
+./grotti -user:<thunder-addr>.<rig>      # gentle defaults: 4 threads, 500 KH/s cap
 ```
 
-That's it — the defaults point at the drivechain pool and stay well under the
-network hashrate. Press **Ctrl-C** to stop cleanly.
+Or put `user` (and anything else) in a `grotti.conf` next to the binary and just run
+`./grotti`. Grotti **refuses to start without a username** — no address is baked in.
+Press **Ctrl-C** to stop cleanly.
 
 ### Examples
 
@@ -71,7 +75,7 @@ network hashrate. Press **Ctrl-C** to stop cleanly.
 | Flag | Default | Meaning |
 |---|---|---|
 | `-pool:ENDPOINT` | `pool.drivechain.info:3334` | stratum pool — `host:port` or `stratum+tcp://host:port` |
-| `-user:addr.rig` | *(a demo address)* | `<thunder-addr>.<rig>` for `mining.authorize` |
+| `-user:addr.rig` | **required** | `<thunder-addr>.<rig>` for `mining.authorize` (or set in `grotti.conf`) |
 | `-backend:LIST` | `cpu` | `cpu` \| `cuda` \| `cpu,cuda` — never auto-selects the GPU |
 | `-threads:N` | `4` | CPU worker threads |
 | `-cap:N` | `500000` | **`0`** = uncapped · **`1–100`** = percent of max (e.g. `-cap:25`) · **`>100`** = raw H/s |
@@ -122,6 +126,29 @@ cd cuda && nvcc -fatbin \
 `linux-x86_64` and `linux-arm64` on every push (Odin only — it embeds the committed
 fatbin), and publishes both binaries as a GitHub Release on a `v*` tag. Currently
 **Linux-only** (`core:sys/posix`, `libcuda.so.1`); Windows/macOS would need porting.
+
+---
+
+## Generate a Thunder address
+
+You need a Thunder address for `-user`. Grotti can mint one **offline** — no node, no
+RPC, no external dependency (pure Odin, using `core:crypto`'s ed25519/SHA-512/HMAC/
+PBKDF2 plus a small built-in blake3 and base58):
+
+```sh
+# New wallet: prints a 12-word BIP39 mnemonic and its first address
+./grotti keygen
+
+# Recover the address for an existing mnemonic
+./grotti keygen "word1 word2 ... word12"
+```
+
+The derivation matches `thunder-rust` exactly — BIP39 → SLIP-0010 ed25519 at
+`m/1'/0'/0'/1'` → `base58(blake3_xof(pubkey)[0:20])` — verified against a known
+mnemonic→address vector in the tests, so the mnemonic works in a real Thunder wallet.
+
+> **Save the mnemonic.** It is the only backup for the address; anyone with it controls
+> the funds. The address itself is public and safe to share.
 
 ---
 

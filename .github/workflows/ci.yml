@@ -37,6 +37,7 @@ jobs:
         run: |
           odin test .
           odin test sha256d
+          odin test keygen
 
       - name: Build
         run: odin build cli -out:grotti-${{ matrix.arch }} -o:speed

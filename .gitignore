@@ -7,6 +7,7 @@
 *.obj
 *.pdb
 *.dSYM/
+grotti.conf
 
 # Harness binaries, if built into their package dirs instead of elsewhere.
 /cli/cli
