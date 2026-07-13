@@ -147,6 +147,10 @@ The derivation matches `thunder-rust` exactly — BIP39 → SLIP-0010 ed25519 at
 `m/1'/0'/0'/1'` → `base58(blake3_xof(pubkey)[0:20])` — verified against a known
 mnemonic→address vector in the tests, so the mnemonic works in a real Thunder wallet.
 
+The 128-bit entropy comes from the **OS cryptographic RNG** (`crypto.rand_bytes`,
+i.e. `getrandom`/`/dev/urandom`), which blocks until seeded and panics on failure —
+never a weak PRNG. That single call is the only randomness in the path.
+
 > **Save the mnemonic.** It is the only backup for the address; anyone with it controls
 > the funds. The address itself is public and safe to share.
 

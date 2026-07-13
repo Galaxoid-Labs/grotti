@@ -135,9 +135,15 @@ Wallet :: struct {
 }
 
 // generate mints a fresh 12-word wallet (128-bit entropy) and its first address.
+//
+// SECURITY: this crypto.rand_bytes call is the ONLY source of randomness in the whole
+// keygen path (everything after it is deterministic). It draws from the OS
+// cryptographic entropy source (getrandom / /dev/urandom on Linux): it blocks until
+// the pool is seeded and PANICS on any failure, so it can never silently fall back to
+// a weak generator. It is NOT core:math/rand.
 generate :: proc(allocator := context.allocator) -> Wallet {
 	entropy: [16]u8
-	crypto.rand_bytes(entropy[:])
+	crypto.rand_bytes(entropy[:]) // OS CSPRNG — see the security note above
 	mnemonic := entropy_to_mnemonic(entropy[:], allocator)
 	return Wallet{mnemonic = mnemonic, address = address_from_mnemonic(mnemonic, allocator)}
 }
