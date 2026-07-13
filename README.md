@@ -39,27 +39,31 @@ network hashrate. Press **Ctrl-C** to stop cleanly.
 ### Examples
 
 ```sh
-# More threads, a higher (but still governed) cap
-./grotti -threads:8 -cap:2000000
+# GPU at 25% — just give -cap a percentage
+./grotti -backend:cuda -cap:25
 
-# Your own payout address and rig name
+# GPU at half speed
+./grotti -backend:cuda -cap:50
+
+# Full tilt (uncapped)
+./grotti -backend:cuda -cap:0
+
+# CPU: more threads at 50%
+./grotti -threads:8 -cap:50
+
+# An exact hashrate cap in H/s (anything >100 is treated as raw H/s)
+./grotti -backend:cuda -cap:1000000000     # 1 GH/s
+
+# Your own payout address / rig, or a different pool
 ./grotti -user:<thunder-addr>.<rig>
-
-# A different pool
 ./grotti -pool:pool.example.com:3334
+
+# Both CPU and GPU, one global cap split across them
+./grotti -backend:cpu,cuda -cap:50
 
 # Force color on when piping to a file, or off entirely
 ./grotti -color:always
 ./grotti -color:never
-
-# Full tilt CPU — all cores, uncapped
-./grotti -threads:20 -cap:0
-
-# GPU (NVIDIA, via runtime-loaded CUDA) — uncapped
-./grotti -backend:cuda -cap:0
-
-# Both CPU and GPU, one global cap split across them
-./grotti -backend:cpu,cuda -cap:0
 ```
 
 ### Flags
@@ -70,7 +74,7 @@ network hashrate. Press **Ctrl-C** to stop cleanly.
 | `-user:addr.rig` | *(a demo address)* | `<thunder-addr>.<rig>` for `mining.authorize` |
 | `-backend:LIST` | `cpu` | `cpu` \| `cuda` \| `cpu,cuda` — never auto-selects the GPU |
 | `-threads:N` | `4` | CPU worker threads |
-| `-cap:HPS` | `500000` | hashrate cap in H/s (`0` = uncapped) |
+| `-cap:N` | `500000` | **`0`** = uncapped · **`1–100`** = percent of max (e.g. `-cap:25`) · **`>100`** = raw H/s |
 | `-color:MODE` | `auto` | `auto` \| `always` \| `never` |
 
 **GPU backend:** the CUDA driver is `dlopen`'d at runtime — no build-time CUDA
@@ -101,15 +105,24 @@ fatbin), and publishes both binaries as a GitHub Release on a `v*` tag. Currentl
 
 ## The cap
 
-The governor paces every worker to a global cap (it does not reduce parallelism), so
-CPU cost is roughly `cap ÷ 8.4 MH/s` in cores — 500 KH/s ≈ 0.06 of a core. The
-default is low purely as a courtesy so a bare `./grotti` doesn't compete with other
-work on the box; **raise `-cap` / `-threads` freely.** On this chain (network
-difficulty ~133,000, shown live at startup) a CPU is a negligible fraction of the
-network, so the cap is a resource knob, not a chain-safety limit.
+The governor paces every worker to a global cap (it does not reduce parallelism), and
+it takes `-cap` three ways:
 
-The same global cap governs the GPU (`cap ÷ 2.6 GH/s` of the card), and when running
-`-backend:cpu,cuda` it is split across both by their measured rate. See `CLAUDE.md` § 2.
+- **`-cap:0`** — uncapped, full speed.
+- **`-cap:25`** — a **percentage** (1–100) of the selected backends' estimated max.
+  `25` runs each backend at ~25% (heat/power/duty scale roughly with it). This is the
+  easy knob.
+- **`-cap:1000000000`** — anything **over 100** is a raw **H/s** cap.
+
+Percentages are relative to a built-in estimate (~8.4 MH/s per CPU thread, ~2.6 GH/s
+for a GB10), so they're exact on a GB10 and approximate on other GPUs. When running
+`-backend:cpu,cuda`, the global cap is split across both by their estimated rate, so
+each ends up at the same fraction of its own max.
+
+The cap is a **resource knob, not a chain-safety limit** — on this chain (network
+difficulty ~133,000, shown live at startup) even the GPU is a negligible fraction of
+the network. The default is low purely as a courtesy so a bare `./grotti` doesn't
+compete with other work on the box; raise it freely. See `CLAUDE.md` § 2.
 
 ## Will I see accepted shares? A block?
 

@@ -25,7 +25,7 @@ Options :: struct {
 	user:    string `usage:"stratum username: <thunder-addr>.<rig>"`,
 	backend: string `usage:"cpu | cuda | cpu,cuda (default cpu — never auto-selects GPU)"`,
 	threads: int    `usage:"number of CPU worker threads"`,
-	cap:     f64    `usage:"hashrate cap in H/s (0 = uncapped)"`,
+	cap:     f64    `usage:"cap: 0=uncapped, 1-100=percent of max (e.g. 25), >100=raw H/s"`,
 	color:   string `usage:"color output: auto | always | never"`,
 }
 
@@ -79,14 +79,35 @@ main :: proc() {
 		fmt.printfln("gpu: %s  ·  compute %d.%d  ·  %d SMs", cuda.device_name(&info), info.cc_major, info.cc_minor, info.mp_count)
 	}
 
-	// The cap is a resource/courtesy throttle, not a chain-safety gate — on this chain
+	// Estimated max hashrate of the selected backends — used to resolve a percentage
+	// -cap and to split a global cap across backends.
+	cpu_max := run_cpu ? f64(opts.threads) * PER_THREAD_HPS : 0
+	gpu_max := run_cuda ? GPU_EST_HPS : 0
+	total_max := cpu_max + gpu_max
+
+	// -cap: 0 = uncapped; 1..100 = percent of the estimated max; >100 = raw H/s.
+	cap_hps: f64
+	switch {
+	case opts.cap <= 0:
+		cap_hps = 0
+	case opts.cap <= 100:
+		cap_hps = opts.cap / 100 * total_max
+	case:
+		cap_hps = opts.cap
+	}
+
+	// The cap is a resource throttle, not a chain-safety gate — on this chain
 	// (difficulty ~133k) even the GPU is a small fraction of the network.
-	if opts.cap <= 0 {
+	if cap_hps <= 0 {
 		fmt.println("cap: uncapped")
 	} else {
 		rate := strings.builder_make(context.temp_allocator)
-		grotti.human_hps(&rate, opts.cap)
-		fmt.printfln("cap: %s (global, split across backends)  ·  raise with -cap", strings.to_string(rate))
+		grotti.human_hps(&rate, cap_hps)
+		if opts.cap <= 100 {
+			fmt.printfln("cap: %.0f%% ≈ %s  ·  adjust with -cap", opts.cap, strings.to_string(rate))
+		} else {
+			fmt.printfln("cap: %s  ·  adjust with -cap", strings.to_string(rate))
+		}
 	}
 	fmt.println()
 
@@ -118,15 +139,12 @@ main :: proc() {
 	thread.start(ft)
 
 	// Split the global cap across the selected backends by their estimated rate, so
-	// the total lands on -cap. Uncapped (cap<=0) passes through to both.
-	cpu_w := run_cpu ? f64(opts.threads) * PER_THREAD_HPS : 0
-	gpu_w := run_cuda ? GPU_EST_HPS : 0
-	total_w := cpu_w + gpu_w
-	cpu_cap := opts.cap
-	gpu_cap := opts.cap
-	if opts.cap > 0 && total_w > 0 {
-		cpu_cap = opts.cap * cpu_w / total_w
-		gpu_cap = opts.cap * gpu_w / total_w
+	// the total lands on cap_hps. Uncapped (cap_hps<=0) passes through to both.
+	cpu_cap := cap_hps
+	gpu_cap := cap_hps
+	if cap_hps > 0 && total_max > 0 {
+		cpu_cap = cap_hps * cpu_max / total_max
+		gpu_cap = cap_hps * gpu_max / total_max
 	}
 
 	miner: ^grotti.Miner
@@ -150,7 +168,7 @@ main :: proc() {
 		}
 		hps := grotti.rate_sample(&sampler, st)
 		snap := grotti.stats_snapshot(st)
-		gov := opts.cap > 0 ? hps / opts.cap : -1 // -1 → "gov —" when uncapped
+		gov := cap_hps > 0 ? hps / cap_hps : -1 // -1 → "gov —" when uncapped
 		line := strings.builder_make(context.temp_allocator)
 		grotti.format_status(&line, g_console, snap, hps, gov, "")
 		say(strings.to_string(line))
