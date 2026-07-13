@@ -2,6 +2,7 @@
 package grotti
 
 import "core:encoding/endian"
+import "core:strings"
 import "core:testing"
 import "core:time"
 
@@ -9,11 +10,22 @@ import "core:time"
 // the threaded Metal worker for a short window, then confirm it hashed and that EVERY share
 // it produced is genuinely valid. This exercises the real backend on a spawned thread —
 // device/pipeline bring-up, the per-scan autorelease pool, and the shared-buffer drain —
-// which the on-main-thread kerneltest does not. Skips gracefully if no Metal device.
+// which the on-main-thread kerneltest does not.
+//
+// Skips gracefully when there is no usable GPU: no Metal device at all (headless), OR a
+// VIRTUALIZED device that reports present but can't run real compute. GitHub's hosted macOS
+// runners expose an "Apple Paravirtual device" — MTLCreateSystemDefaultDevice() succeeds, but
+// no dispatch completes in the window, so we detect that class of device by name and skip.
+// On real Apple hardware (dev machines, self-hosted runners) the full test runs.
 @(test)
 test_metal_worker :: proc(t: ^testing.T) {
-	if !metal_available() {
+	info := metal_probe()
+	if !info.present {
 		return // headless CI with no GPU — nothing to prove here
+	}
+	name := metal_device_name(&info)
+	if strings.contains(name, "Paravirtual") || strings.contains(name, "software") || strings.contains(name, "llvmpipe") {
+		return // virtualized/software GPU (e.g. hosted macOS CI): present but can't mine
 	}
 
 	ring: Job_Ring
