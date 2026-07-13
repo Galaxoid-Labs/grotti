@@ -19,7 +19,11 @@ jobs:
         include:
           - { runner: ubuntu-24.04, arch: linux-x86_64 }
           - { runner: ubuntu-24.04-arm, arch: linux-arm64 } # for GB10-class ARM boxes
+          - { runner: windows-latest, arch: windows-x86_64, ext: .exe } # native build + first real Windows check (CPU + Vulkan backends; CUDA is Linux-only)
     runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash # git-bash on windows-latest, so `|| true` and one step syntax work on every runner
     steps:
       - uses: actions/checkout@v5
 
@@ -40,15 +44,15 @@ jobs:
           odin test keygen
 
       - name: Build
-        run: odin build cli -out:grotti-${{ matrix.arch }} -o:speed -define:GROTTI_VERSION=${{ github.ref_type == 'tag' && github.ref_name || '0.1.0-dev' }}
+        run: odin build cli -out:grotti-${{ matrix.arch }}${{ matrix.ext }} -o:speed -define:GROTTI_VERSION=${{ github.ref_type == 'tag' && github.ref_name || '0.1.0-dev' }}
 
       - name: Smoke-check (prints usage, exits — no pool, no GPU)
-        run: ./grotti-${{ matrix.arch }} -help || true
+        run: ./grotti-${{ matrix.arch }}${{ matrix.ext }} -help || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: grotti-${{ matrix.arch }}
-          path: grotti-${{ matrix.arch }}
+          path: grotti-${{ matrix.arch }}${{ matrix.ext }}
 
   # NOTE: there is no CUDA job. The kernel ships as the committed portable fatbin at
   # cuda/kernel.cubin (embedded via #load), so CI needs no CUDA toolkit. Rebuild the

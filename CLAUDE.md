@@ -431,6 +431,44 @@ odin test . -all-packages
 `-o:speed` is mandatory for anything hashrate-related. Never benchmark a debug
 build.
 
+## Windows (first-run checklist — code is cross-checked, not yet runtime-tested)
+
+The tree type-checks clean for `windows_amd64` (`odin check cli -target:windows_amd64`),
+and the OS-specific code (TTY detect + ANSI enable, Ctrl-C) lives behind per-OS files
+(`console_tty_{unix,windows}.odin`, `cli/signal_{unix,windows}.odin`). But nothing has
+*run* on Windows yet. Build **on** a Windows host (Odin can't cross-link a Windows binary
+from Linux; native linking is fine):
+
+```
+odin build cli -out:grotti.exe -o:speed
+```
+
+- **Use `-backend:vulkan` on Windows.** Modern NVIDIA and AMD drivers ship `vulkan-1.dll`
+  and their ICDs, so no install is needed. Vulkan drives **both** GPU vendors from one
+  backend.
+- **`-backend:cuda` does not work on Windows yet.** `cuda/dynlib.odin` hardcodes
+  `libcuda.so.1`; the Windows CUDA driver is `nvcuda.dll`. A per-OS name (like Vulkan's)
+  is a small follow-up — but unnecessary, since Vulkan already drives the NVIDIA card.
+- **AMD iGPU + NVIDIA dGPU box:** the device selector must pick the **NVIDIA discrete**
+  (score 4) over the AMD integrated (score 3). Startup should print
+  `vulkan: NVIDIA … · selected of 2 device(s)` — if it names the AMD part, the selector is
+  wrong.
+
+First-run checklist:
+
+1. `grotti.exe -help` — starts, prints usage (arg parsing + no POSIX linkage).
+2. `grotti.exe keygen` — the crypto RNG path works on Windows (`BCryptGenRandom`).
+3. `odin run vulkan/kerneltest` — the differential test PASSes on real hardware.
+4. `grotti.exe -backend:vulkan -user:<addr>.<rig>` — the `vulkan:` line names the **NVIDIA**
+   device, it connects, hashes, and shares land.
+5. **Color:** run in Windows Terminal — ANSI SGR should render (VT enabled in `_enable_ansi`).
+   Legacy `conhost` without VT support degrades to plain text, which is acceptable.
+6. **Ctrl-C:** clean shutdown (the console control handler sets the quit flag).
+7. **Status line:** the in-place `\r` repaint should look right, not smear.
+
+Watch for (unproven on Windows): `core:net` connect behavior, the repainting status line on
+`conhost`, and VT enabling on older Windows builds.
+
 ---
 
 ## Console output
