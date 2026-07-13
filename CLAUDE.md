@@ -29,7 +29,7 @@ dependency; runs on a box with no GPU.
 | **v1** | `cpu` | — | Pure Odin, scalar → midstate → SIMD. **Default. Done.** |
 | **v2** | `cuda` | `libcuda.so.1` | NVIDIA / GB10. **Done — ~2.6 GH/s.** (`cuda/`) |
 | **v2** | `vulkan` | `libvulkan.so.1` | Portable (NVIDIA/AMD/Intel). `vendor:vulkan`. **Done — correct, ~1.78 GH/s on GB10 (~70% of CUDA).** (`vulkan/`) |
-| *opt* | `metal` | `Metal.framework` | macOS / Apple Silicon. Roadmap (DEVELOPMENT.md § Phase 9). |
+| **v2** | `metal` | `Metal.framework` | macOS / Apple Silicon. **Done — correct, ~0.22 GH/s on M1 Max.** (`metal/`) |
 | *opt* | `opencl` | `libOpenCL.so.1` | Widest reach. Optional. Not started. |
 
 GPU libraries are `dlopen`'d via `core:dynlib` — **never `foreign import`**, which
@@ -116,7 +116,7 @@ Therefore:
 This is what makes a GPU backend permissible at all.
 
 ```
-        Fenja ─► job ring ─► Governor ─► Backend (CPU | CUDA)
+        Fenja ─► job ring ─► Governor ─► Backend (CPU | CUDA | Vulkan | Metal)
                              ▲
                     the cap lives HERE
 ```
@@ -129,20 +129,33 @@ A 3 GH/s CUDA engine capped at 500 KH/s is safe. The same engine uncapped is a
 chain-bricking event. The difference is one layer of indirection, and it is not
 optional.
 
-### 2c. Auto-detect never selects a GPU
+### 2c. Auto-selects the fastest backend — but only ever *governed*
 
-If `--backend` is omitted, Grotti runs on **CPU**. Full stop — even if a GB10 is
-sitting right there, idle, detected, and reported by `--list-backends`.
+`-backend` defaults to `auto`, which picks the single fastest AVAILABLE backend in fixed
+capability order (`cuda > metal > vulkan > cpu`) and **prints the choice** (`backend=auto →
+metal`). It never runs a GPU silently, and never ungoverned.
 
-A user who did not ask for 3 GH/s must not receive 3 GH/s. Convenience
-auto-selection is how someone bricks a chain by running `grotti` with no
-arguments. Availability is *reported*; it is never *assumed*.
+The original rule here was "auto never selects a GPU," on the theory that a no-argument
+`grotti` handing someone 3 GH/s could brick a small chain. Two things retired that:
+
+1. The governor (§2b) sits ABOVE the backend and defaults to a 500 KH/s cap regardless of
+   which backend `auto` picks. An auto-selected GB10 is throttled to 0.5 MH/s, not 3 GH/s.
+   The danger was never *which* backend runs — it was *ungoverned* full-speed hashing, and
+   that still requires an explicit opt-in (`-cap:0`).
+2. The live-wire finding (§2, 2026-07-12): at difficulty ~133k even a full GPU is a small
+   fraction of the network, so GPU selection is not a bricking event on this chain.
+
+So the load-bearing property is not "CPU-only by default" — it is **auto-selection is always
+governed, and uncapping is always explicit and visible**. A GPU is still never run silently:
+the resolved backend is printed, `-list-backends` reports availability without committing to a
+device, and the startup safety block states the cap in H/s and as a multiple of network.
 
 ```
-grotti                        # cpu. always.
-grotti --list-backends        # shows cuda is available + est. hashrate
-grotti --backend=cuda         # explicit. still governed.
-grotti --backend=cpu,cuda     # both, one global cap between them.
+grotti                        # auto → fastest available, GOVERNED (default 500 KH/s cap)
+grotti -list-backends         # reports what's present + what auto would pick; commits nothing
+grotti -backend:cuda          # explicit. still governed.
+grotti -backend:cpu,cuda      # both, one global cap between them.
+grotti -cap:0                 # THE opt-in that lifts the throttle — explicit, never implied
 ```
 
 ### 3. No allocation in the hot loop
@@ -336,6 +349,14 @@ grotti/
   vulkan/                  # package vulkan — v2, second
     backend.odin
     sha256d.comp           # GLSL → SPIR-V
+  metal/                   # package metalbackend — v2, macOS (#+build darwin)
+    backend.odin           # Engine: device, runtime MSL compile, dispatch, hit drain
+    probe.odin             # metal_probe → Device_Info (no dlopen; Metal is a system fwk)
+    sha256d.metal          # MSL, compiled at runtime via newLibraryWithSource
+    kerneltest/            # differential vs sha256d (scalar) + block-125552 anchor
+    bench/                 # throughput sweep → METAL_EST_HPS
+  metal_worker.odin        # package grotti (#+build darwin): Metal worker, twin of vk_worker
+  metal_worker_stub.odin   # package grotti (#+build !darwin): no-op stubs → portable off-mac
   cli/                     # package main → the `grotti` binary
     main.odin
   testutil/
@@ -367,8 +388,10 @@ Two things that look wrong and aren't:
   this chain a single GPU launch typically finds *several* shares, which inverts
   the assumption every reference miner is built on. A single result slot
   silently discards most of them.
-- **`probe` is separate from `init`.** `--list-backends` must be able to report
-  availability without committing to a device or allocating anything.
+- **`probe` is separate from `init`.** `-list-backends` must be able to report
+  availability without committing to a device or allocating anything. (Now
+  implemented: `grotti -list-backends` probes every backend and prints what `auto`
+  would pick, allocating nothing on a GPU.)
 
 Backends run **concurrently** if selected. Each gets its own `extranonce2`
 stream; all feed one MPSC share queue. Fenja never knows which one found a
@@ -474,56 +497,54 @@ First-run checklist:
 Watch for (unproven on Windows): `core:net` connect behavior, the repainting status line on
 `conhost`, and VT enabling on older Windows builds.
 
-## macOS / Metal (kickoff notes — CPU builds today, Metal is the missing GPU piece)
+## macOS / Metal (DONE — built and validated on an Apple M1 Max, 2026-07-13)
 
-The non-GPU miner already targets macOS: `odin check cli -target:darwin_arm64` and
-`-target:darwin_amd64` are clean, and the POSIX console/Ctrl-C files
-(`console_tty_unix.odin`, `cli/signal_unix.odin`) carry `darwin` in their `#+build` tags, so
-TTY color and clean shutdown work there too. What's missing is a **Metal** backend for
-Apple-Silicon *GPU* mining. Full design is in **DEVELOPMENT.md § Phase 9**; this is the
-practical order of operations when you're at the Mac.
+The Metal GPU backend is implemented and passes the correctness gate on real hardware. It
+followed `vulkan/` as the template exactly (the design rationale below is preserved). The
+non-GPU miner already targeted macOS (`odin check cli -target:darwin_arm64/-amd64` clean;
+POSIX console/Ctrl-C files carry `darwin` tags), so CPU SIMD mining works there too.
 
-**Step 0 — prove the baseline before touching Metal.** On the Mac:
+**What shipped:**
 
-```
-odin build cli -out:grotti -o:speed
-./grotti keygen                          # crypto RNG on macOS (SecRandom/getentropy)
-./grotti -backend:cpu -user:<addr>.<rig> # CPU SIMD mining — should just work
-```
+- **`metal/` package (`metalbackend`, `#+build darwin`)** — an `Engine` mirroring
+  `vkbackend.Engine` / `cuda.Engine` **1:1** (`engine_init_source` / `engine_load_job` /
+  `engine_scan` / `engine_destroy`). `metal_worker.odin` (package grotti) is a near-copy of
+  `vk_worker.odin` (ring → scan → drain → pacer). `metal_worker_stub.odin` (`#+build !darwin`)
+  provides the same public symbols as no-ops so package grotti stays portable — `odin check
+  cli -target:linux_amd64` and `-target:windows_amd64` are both clean.
+- **Bindings:** `vendor:darwin/Metal` + `core:sys/darwin/Foundation` (Foundation moved out of
+  `vendor:` — Metal imports the `core:sys` one). `Metal.framework` is linked directly, NOT
+  dlopen'd — the "dlopen, never foreign import" rule guards against *optional* libraries that
+  may be absent; Metal is a guaranteed macOS system framework and a macOS build is macOS-only,
+  so linking it is correct, and the `#+build darwin` split keeps the rest of the tree portable.
+- **Kernel `metal/sha256d.metal`** — MSL port of `vulkan/sha256d.comp`, compiled **at runtime**
+  from the embedded source string (`newLibraryWithSource`) — no `metallib`, no Xcode step, no
+  per-arch flags; Metal handles every GPU generation. The 64-round schedule is `#pragma unroll`d
+  from the start (the Vulkan 2.2× lesson) — verified: an explicit `#pragma clang loop
+  unroll(full)` gives the identical rate, so the plain pragma already fully unrolls.
+- **Memory:** `MTLResourceStorageModeShared` (Apple Silicon unified memory, like the GB10 — no
+  staging copies). Device: `MTLCreateSystemDefaultDevice()` (one GPU → no discrete/integrated
+  selection question, unlike Vulkan). Each `engine_scan` runs in its own
+  `NS.scoped_autoreleasepool` so the per-launch command buffer/encoder (both autoreleased) are
+  freed — required for the worker thread (test_metal_worker runs clean under the leak tracker).
+- **Governor** stays ABOVE the backend (invariant #2b); Metal only scans and reports hits. It
+  participates in `-backend:auto` (fixed order `cuda > metal > vulkan > cpu`, so on a Mac it is
+  what auto picks) but only ever *governed* (invariant #2c), and the choice is printed.
 
-If that mines, everything except the GPU kernel is already good on macOS.
+**Correctness gate (invariant #4) — PASSES.** `metal/kerneltest` reproduces block 125552's
+winning nonce AND matches `scan_simd` bit-for-bit over a range (232/232 hits IDENTICAL on the
+M1 Max). `metal/probe` names the GPU; `metal/bench` measures throughput.
 
-**Building the Metal backend — `vulkan/` is now the proven template.** Follow the exact
-shape that worked for Vulkan:
+**Perf:** ~0.22 GH/s on an M1 Max, flat from 2^22 to 2^27 nonces/launch (compute-bound, not
+dispatch-bound) — well below a GB10, ~30× a full 4-thread CPU, as expected. `METAL_LAUNCH` is
+2^22 (~19 ms/launch) for responsiveness at no throughput cost. `METAL_EST_HPS = 2.2e8` (M1 Max;
+device-dependent, cap-split estimate only).
 
-- `metal/` package with an `Engine` mirroring `vkbackend.Engine` / `cuda.Engine` **1:1**
-  (`engine_init_data` / `engine_load_job` / `engine_scan` / `engine_destroy`), so
-  `metal_worker.odin` is a near-copy of `vk_worker.odin` (ring → scan → drain → pacer).
-- Bindings: `vendor:darwin/Metal` + `Foundation` (Odin ships them). Link `Metal.framework`
-  directly — the "`dlopen`, never `foreign import`" rule guards against *optional* libraries
-  that may be absent; Metal is a guaranteed macOS system framework and a macOS build is
-  macOS-only, so linking it is correct (DEVELOPMENT.md § Phase 9).
-- Kernel: port `vulkan/sha256d.comp` (or `cuda/kernel.cu`) to `metal/sha256d.metal`. MSL is
-  C++-flavored (`atomic_uint`, `[[thread_position_in_grid]]`), so it translates almost
-  line-for-line. Compile it **at runtime** from an embedded source string
-  (`newLibraryWithSource:`) — no `metallib`, no Xcode build step, no per-arch flags.
-- **Heed the Vulkan perf lesson:** the naive shader was 2.2× too slow until the 64-round
-  loop was unrolled so the 16-word schedule stayed in registers. Unroll it in MSL from the
-  start (`#pragma unroll`) — don't rediscover this.
-- Buffers: `MTLResourceStorageModeShared` (Apple Silicon is unified memory, like the GB10 —
-  no staging copies; same model as the Vulkan Engine). Device: `MTLCreateSystemDefaultDevice()`
-  (one GPU on Apple Silicon → no discrete/integrated selection question, unlike Vulkan).
-- Governor stays ABOVE the backend (invariant #2b); Metal only scans and reports hits, and
-  `--backend` still never auto-selects it (invariant #2c).
-
-**Correctness gate first (invariant #4).** Write `metal/kerneltest` mirroring
-`vulkan/kerneltest`: reproduce block 125552's winning nonce **and** match `scan_simd`
-bit-for-bit over a range. Do **not** wire Metal into the miner until it is identical — a
-fast-but-wrong kernel is worse than none.
-
-**Verify once built:** `./grotti -backend:metal -user:<addr>.<rig>` names the Apple GPU,
-connects, and hashes (expect below a GB10, well above CPU). Then a `macos-latest` CI runner
-(build + `-help` smoke) can join the matrix, same as we did for Windows.
+**Still OPEN (for the user to run):** a **live pool test** —
+`./grotti -backend:metal -pool:<host:port> -user:<addr>.<rig>` — to confirm shares are
+*accepted* on the wire (the gate proves the hash math, not the end-to-end submit path; that
+path is shared with the proven CPU/CUDA/Vulkan backends, so risk is low). A `macos-latest` CI
+runner (build + `-help` smoke) can then join the matrix, same as Windows.
 
 ---
 

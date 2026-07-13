@@ -20,6 +20,7 @@ jobs:
           - { runner: ubuntu-24.04, arch: linux-x86_64 }
           - { runner: ubuntu-24.04-arm, arch: linux-arm64 } # for GB10-class ARM boxes
           - { runner: windows-latest, arch: windows-x86_64, ext: .exe } # native build + first real Windows check (CPU + Vulkan backends; CUDA is Linux-only)
+          - { runner: macos-latest, arch: macos-arm64 } # Apple Silicon; CPU + Metal backends (odin test . exercises Metal if the runner exposes a GPU, else skips)
     runs-on: ${{ matrix.runner }}
     defaults:
       run:

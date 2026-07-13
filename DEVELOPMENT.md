@@ -267,19 +267,22 @@ probes, and either offers itself or doesn't.
 ### Selection rules
 
 ```
-grotti --list-backends           # what's actually available on this box
-grotti --backend=cpu             # default
-grotti --backend=cuda
-grotti --backend=cpu,cuda        # both, concurrently
+grotti -list-backends            # what's actually available on this box + what auto picks
+grotti                           # -backend:auto (the default)
+grotti -backend:cuda
+grotti -backend:cpu,cuda         # both, concurrently
 ```
 
-**Auto-detect never selects a GPU.** If `--backend` is omitted, Grotti runs on
-CPU, full stop — even if a GB10 is sitting right there. A user who did not ask
-for 3 GH/s must not receive 3 GH/s. This is the same invariant as the governor,
-enforced one layer up (`CLAUDE.md` § 2b).
+**`-backend:auto` is the default and picks the fastest AVAILABLE backend**, in fixed
+capability order `cuda > metal > vulkan > cpu`, and *prints the choice*
+(`backend=auto → metal`). It never runs a GPU silently or ungoverned. The earlier rule
+here — "auto never selects a GPU" — was retired once the governor was understood to make
+GPU selection safe: an auto-selected GPU is still capped by the default 500 KH/s governor
+(`CLAUDE.md` § 2b), so the danger was never *which* backend runs but *ungoverned* hashing,
+which still requires an explicit `-cap:0`. Full reasoning: `CLAUDE.md` § 2c.
 
-`--list-backends` reports availability *and* an estimated hashrate, so the
-choice is informed rather than a surprise.
+`-list-backends` reports availability *and* an estimated hashrate (and what `auto` would
+pick), committing to no device — so the choice is informed rather than a surprise.
 
 ### Running several backends at once
 
@@ -293,10 +296,10 @@ budget each second, proportional to measured rate, and each backend's token
 bucket draws from its slice. A shared atomic bucket would just create contention
 on the hot path for no benefit.
 
-### CUDA first, Vulkan second
+### CUDA first, Vulkan second, Metal third
 
 Not either/or — that framing was wrong once backends became selectable. Order is
-just effort-per-hash:
+just effort-per-hash (all three are now done):
 
 - **CUDA** is ~12 FFI procs, one `.cu` file, and hand-tunable `LOP3`. It's the
   actual target hardware.
@@ -308,6 +311,12 @@ just effort-per-hash:
   rounds via `GL_EXT_control_flow_attributes` `[[unroll]]` so the 16-word schedule
   is scalar-replaced into registers (glslang won't unroll on its own; `spirv-opt`
   didn't help). Remaining gap: SPIR-V→SASS vs nvcc + no LOP3/`__launch_bounds__`.
+- **Metal** is macOS/Apple-Silicon GPU, built behind the same seam. **Now done:**
+  `metal/` mirrors the Vulkan/CUDA Engine API, compiles the MSL kernel at startup,
+  and is differentially tested on hardware. Measured ~0.22 GH/s on an M1 Max — which
+  we confirmed is the GPU's *ALU-bound ceiling* for this workload, not an untuned port:
+  Apple GPUs lack a hardware funnel-shift, so SHA's rotates cost ~3× the instructions
+  (details in Phase 9 and `CLAUDE.md` § macOS / Metal).
 - **OpenCL** is mostly interesting because the old cgminer kernels
   (`poclbm`/`phatk` lineage) are proven reference code. Optional.
 
@@ -562,7 +571,7 @@ See § v2 above. Order matters:
    step.
 
 - **Exit criterion:** bit-identical to the scalar hasher across 10⁶ random
-  headers; sustained GH/s measured; `--backend=cpu,cuda` runs both under one
+  headers; sustained GH/s measured; `-backend:cpu,cuda` runs both under one
   global cap; and — non-negotiable — the governor still holds it to the
   configured rate.
 
@@ -574,7 +583,14 @@ Portability, once CUDA has proven the seam. GLSL compute shader → SPIR-V,
 Expect materially more setup code than CUDA and somewhat lower throughput. Worth
 it only if Grotti needs to run on non-NVIDIA hardware — which today it doesn't.
 
-### Phase 9 — Metal backend (macOS / Apple Silicon, optional)
+### Phase 9 — Metal backend (macOS / Apple Silicon) — DONE (2026-07-13, M1 Max)
+
+**Shipped and validated.** `metal/` package (`metalbackend`, `#+build darwin`) + `metal_worker.odin`
+(with a `#+build !darwin` stub keeping package grotti portable). Runtime-compiled MSL kernel
+(`newLibraryWithSource`), unified-memory shared buffers, per-scan autorelease pool. Correctness
+gate `metal/kerneltest` PASSES (block-125552 anchor + bit-exact differential vs `scan_simd`).
+~0.22 GH/s on an M1 Max (compute-bound). Full write-up: **CLAUDE.md § macOS / Metal**. The one
+open item is a live-pool share-acceptance test. Original design notes below.
 
 Native GPU mining on Apple Silicon. Odin already ships the bindings
 (`vendor:darwin/Metal` + `Foundation` + `QuartzCore`), and this drops in behind the

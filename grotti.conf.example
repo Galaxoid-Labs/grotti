@@ -9,8 +9,9 @@ pool = stratum+tcp://pool.drivechain.info:3334
 # Stratum username: <thunder-addr>.<rig>
 user = YOUR_THUNDER_ADDRESS.rig0
 
-# Backend: cpu | cuda | cpu,cuda  (never auto-selects the GPU)
-backend = cuda
+# Backend: auto | cpu | cuda | vulkan | metal | comma-combo (e.g. cpu,cuda).
+# `auto` (the default) picks the fastest available (cuda > metal > vulkan > cpu), governed.
+backend = auto
 
 # CPU worker threads (only used when the backend includes cpu)
 threads = 4

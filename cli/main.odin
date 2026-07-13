@@ -28,7 +28,7 @@ VERSION :: #config(GROTTI_VERSION, "0.1.0")
 Options :: struct {
 	pool:    string `usage:"pool host:port (required)"`,
 	user:    string `usage:"stratum username: <thunder-addr>.<rig> (required)"`,
-	backend: string `usage:"cpu | cuda | vulkan | comma-combo (default cpu — never auto-selects GPU)"`,
+	backend: string `usage:"auto | cpu | cuda | vulkan | metal | comma-combo (default auto — best available, governed)"`,
 	threads: int    `usage:"number of CPU worker threads"`,
 	cap:     f64    `usage:"cap: 0=uncapped, 1-100=percent of max (e.g. 25), >100=raw H/s"`,
 	color:   string `usage:"color output: auto | always | never"`,
@@ -41,6 +41,12 @@ CUDA_EST_HPS :: 2.56e9 // measured GB10 rate (CUDA); used for the cap split when
 // unaffected. ~70% of the CUDA path (2.56 GH/s) after the shader's SHA schedule was made
 // register-resident (see vulkan/sha256d.comp PERF note).
 VK_EST_HPS :: 1.78e9
+
+// METAL_EST_HPS is the measured Apple-GPU rate (metal/bench on an M1 Max, compute-bound and
+// flat across launch sizes), used only to resolve a percentage -cap and split a global cap
+// across backends; a raw-H/s cap is unaffected. Device-dependent — other Apple GPUs differ,
+// so this is a rough split estimate, not a promise. Below a GB10, well above CPU.
+METAL_EST_HPS :: 2.2e8
 
 PER_THREAD_HPS :: 8.41e6 // measured single-thread SIMD rate; used only for a CPU estimate
 
@@ -71,13 +77,33 @@ main :: proc() {
 	opts := Options {
 		pool    = "", // required — no default; must come from -pool or grotti.conf
 		user    = "", // required — no default; must come from -user or grotti.conf
-		backend = "cpu",
+		backend = "auto",
 		threads = 4,
 		cap     = 500_000,
 		color   = "auto",
 	}
 	conf_path, conf_loaded := load_conf(&opts) // grotti.conf overrides defaults...
+
+	// `grotti -list-backends` reports what is present (and what `auto` would pick) without
+	// connecting — invariant #2c: availability is always *reported*. Handled before the
+	// strict flag parse (it is not an Options field) and needs no pool/user; the CPU thread
+	// count reflects grotti.conf / the default.
+	if wants_list_backends(os.args) {
+		print_backends(&opts)
+		return
+	}
+
 	flags.parse_or_exit(&opts, os.args) // ...and CLI flags override the conf
+
+	// `auto` (the default) resolves to the single fastest AVAILABLE backend, in fixed
+	// capability order cuda > metal > vulkan > cpu — the native APIs never truly compete
+	// (CUDA beats Vulkan on the same NVIDIA card; Metal is macOS-only), and Metal precedes
+	// Vulkan so a Mac with MoltenVK installed still prefers native Metal. The choice is
+	// printed, never silent, and the governor still caps it (invariant #2c relaxed to
+	// "auto may select a GPU, but only ever governed"; see CLAUDE.md § 2c).
+	auto_used := strings.contains(opts.backend, "auto")
+	effective := auto_used ? resolve_auto() : opts.backend
+
 	if opts.pool == "" {
 		fmt.eprintln("no pool endpoint set.")
 		fmt.eprintln("pass -pool:<host:port> (or stratum+tcp://host:port), or set `pool` in grotti.conf.")
@@ -85,11 +111,12 @@ main :: proc() {
 	}
 	pool_addr := normalize_pool(opts.pool)
 
-	run_cpu := strings.contains(opts.backend, "cpu")
-	run_cuda := strings.contains(opts.backend, "cuda")
-	run_vulkan := strings.contains(opts.backend, "vulkan")
-	if !run_cpu && !run_cuda && !run_vulkan {
-		fmt.eprintln("no backend selected (use -backend:cpu|cuda|vulkan or a comma-combo)")
+	run_cpu := strings.contains(effective, "cpu")
+	run_cuda := strings.contains(effective, "cuda")
+	run_vulkan := strings.contains(effective, "vulkan")
+	run_metal := strings.contains(effective, "metal")
+	if !run_cpu && !run_cuda && !run_vulkan && !run_metal {
+		fmt.eprintln("no backend selected (use -backend:auto|cpu|cuda|vulkan|metal or a comma-combo)")
 		return
 	}
 	if run_cuda && !grotti.cuda_available() {
@@ -98,6 +125,10 @@ main :: proc() {
 	}
 	if run_vulkan && !grotti.vk_available() {
 		fmt.eprintln("vulkan backend requested but no Vulkan device is available")
+		return
+	}
+	if run_metal && !grotti.metal_available() {
+		fmt.eprintln("metal backend requested but no Metal device is available (macOS only)")
 		return
 	}
 	if opts.user == "" {
@@ -116,7 +147,8 @@ main :: proc() {
 	}
 	g_console = grotti.console_init(mode)
 
-	fmt.printfln("grotti %s  ·  backend=%s  ·  pool=%s", VERSION, opts.backend, pool_addr)
+	backend_display := auto_used ? fmt.tprintf("auto → %s", effective) : effective
+	fmt.printfln("grotti %s  ·  backend=%s  ·  pool=%s", VERSION, backend_display, pool_addr)
 	if conf_loaded {
 		fmt.printfln("config: %s", conf_path)
 	}
@@ -135,13 +167,25 @@ main :: proc() {
 			vinfo.device_count,
 		)
 	}
+	if run_metal {
+		// Routed through package grotti (not an `import ../metal`) so this file stays
+		// portable — the metal package only exists on darwin.
+		minfo := grotti.metal_probe()
+		fmt.printfln(
+			"metal: %s  ·  %s memory  ·  %d threads/group",
+			grotti.metal_device_name(&minfo),
+			minfo.unified ? "unified" : "discrete",
+			minfo.max_threads,
+		)
+	}
 
 	// Estimated max hashrate of the selected backends — used to resolve a percentage
 	// -cap and to split a global cap across backends.
 	cpu_max := run_cpu ? f64(opts.threads) * PER_THREAD_HPS : 0
 	cuda_max := run_cuda ? CUDA_EST_HPS : 0
 	vk_max := run_vulkan ? VK_EST_HPS : 0
-	total_max := cpu_max + cuda_max + vk_max
+	metal_max := run_metal ? METAL_EST_HPS : 0
+	total_max := cpu_max + cuda_max + vk_max + metal_max
 
 	// -cap: 0 = uncapped; 1..100 = percent of the estimated max; >100 = raw H/s.
 	cap_hps: f64
@@ -201,15 +245,18 @@ main :: proc() {
 	cpu_cap := cap_hps
 	cuda_cap := cap_hps
 	vk_cap := cap_hps
+	metal_cap := cap_hps
 	if cap_hps > 0 && total_max > 0 {
 		cpu_cap = cap_hps * cpu_max / total_max
 		cuda_cap = cap_hps * cuda_max / total_max
 		vk_cap = cap_hps * vk_max / total_max
+		metal_cap = cap_hps * metal_max / total_max
 	}
 
 	miner: ^grotti.Miner
 	cuda_miner: ^grotti.CUDA_Miner
 	vk_miner: ^grotti.VK_Miner
+	metal_miner: ^grotti.METAL_Miner
 	if run_cpu {
 		miner = grotti.mine_start(ring, shares, st, opts.threads, cpu_cap, &g_quit)
 	}
@@ -221,6 +268,10 @@ main :: proc() {
 		// Vulkan uses a widely-separated en2 base (grotti.VK_EN2_BASE) so it never
 		// overlaps the CPU workers or a concurrent CUDA backend.
 		vk_miner = grotti.vk_mine_start(ring, shares, st, grotti.VK_EN2_BASE, vk_cap, &g_quit)
+	}
+	if run_metal {
+		// Metal uses its own widely-separated en2 base (grotti.METAL_EN2_BASE).
+		metal_miner = grotti.metal_mine_start(ring, shares, st, grotti.METAL_EN2_BASE, metal_cap, &g_quit)
 	}
 
 	// Live status until Ctrl-C.
@@ -263,6 +314,9 @@ main :: proc() {
 	if vk_miner != nil {
 		grotti.vk_mine_stop(vk_miner)
 	}
+	if metal_miner != nil {
+		grotti.metal_mine_stop(metal_miner)
+	}
 	thread.join(ft)
 	snap := grotti.stats_snapshot(st)
 	fmt.printfln(
@@ -299,6 +353,74 @@ wants_version :: proc(args: []string) -> bool {
 	return false
 }
 
+wants_list_backends :: proc(args: []string) -> bool {
+	for a in args[1:] {
+		switch a {
+		case "-list-backends", "--list-backends", "list-backends":
+			return true
+		}
+	}
+	return false
+}
+
+// resolve_auto returns the single fastest AVAILABLE backend in fixed capability order:
+// cuda > metal > vulkan > cpu. CPU is always available, so this never returns "none".
+resolve_auto :: proc() -> string {
+	switch {
+	case grotti.cuda_available():
+		return "cuda"
+	case grotti.metal_available():
+		return "metal"
+	case grotti.vk_available():
+		return "vulkan"
+	}
+	return "cpu"
+}
+
+// print_backends reports every backend's availability and estimated rate, and what `auto`
+// would pick — the "report, never assume" half of invariant #2c. Probes only; no device
+// is committed and no memory is allocated on a GPU.
+print_backends :: proc(opts: ^Options) {
+	fmt.println("backends (auto picks the first available, top to bottom):")
+
+	est :: proc(hps: f64) -> string {
+		b := strings.builder_make(context.temp_allocator)
+		grotti.human_hps(&b, hps)
+		return strings.to_string(b)
+	}
+
+	// CUDA
+	if grotti.cuda_available() {
+		info := cuda.cuda_probe()
+		fmt.printfln("  cuda    available    %s  ·  ~%s", cuda.device_name(&info), est(CUDA_EST_HPS))
+	} else {
+		fmt.println("  cuda    unavailable  (no NVIDIA driver / device)")
+	}
+
+	// Metal
+	if grotti.metal_available() {
+		info := grotti.metal_probe()
+		fmt.printfln("  metal   available    %s  ·  ~%s", grotti.metal_device_name(&info), est(METAL_EST_HPS))
+	} else {
+		fmt.println("  metal   unavailable  (macOS only)")
+	}
+
+	// Vulkan
+	if grotti.vk_available() {
+		info := vkb.vulkan_probe()
+		fmt.printfln("  vulkan  available    %s  ·  ~%s", vkb.device_name(&info), est(VK_EST_HPS))
+	} else {
+		fmt.println("  vulkan  unavailable  (no Vulkan loader / device)")
+	}
+
+	// CPU is always available.
+	fmt.printfln("  cpu     available    %d threads  ·  ~%s", opts.threads, est(f64(opts.threads) * PER_THREAD_HPS))
+
+	fmt.println()
+	fmt.printfln("auto → %s", resolve_auto())
+	fmt.println("GPU rates are device-measured estimates (CUDA=GB10, Metal=M1 Max); yours will differ.")
+}
+
 print_help :: proc() {
 	fmt.printfln("grotti %s — a Stratum V1 CPU/GPU miner (drivechain / simplepool)", VERSION)
 	fmt.println()
@@ -306,13 +428,14 @@ print_help :: proc() {
 	fmt.println("  grotti [flags]                 mine (requires -pool and -user, or set in grotti.conf)")
 	fmt.println("  grotti keygen                  generate a new Thunder wallet (mnemonic + address)")
 	fmt.println("  grotti keygen \"<12 words>\"     recover the address for a mnemonic")
+	fmt.println("  grotti -list-backends          show detected backends and what `auto` would pick")
 	fmt.println("  grotti version                 print the version")
 	fmt.println("  grotti -help                   show this help")
 	fmt.println()
 	fmt.println("FLAGS")
 	fmt.println("  -pool:ENDPOINT   host:port or stratum+tcp://host:port   (required)")
 	fmt.println("  -user:ADDR.RIG   stratum username <thunder-addr>.<rig>  (required)")
-	fmt.println("  -backend:LIST    cpu | cuda | vulkan | comma-combo        (default cpu; never auto-selects GPU)")
+	fmt.println("  -backend:LIST    auto|cpu|cuda|vulkan|metal|combo       (default auto; best available, governed)")
 	fmt.println("  -threads:N       CPU worker threads                     (default 4)")
 	fmt.println("  -cap:N           0=uncapped · 1-100=percent · >100=H/s   (default 500000)")
 	fmt.println("  -color:MODE      auto | always | never                  (default auto)")

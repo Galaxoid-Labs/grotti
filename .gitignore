@@ -17,6 +17,9 @@ grotti.conf
 /capture/capture
 /cuda/probe/probe
 /cuda/kerneltest/kerneltest
+/metal/probe/probe
+/metal/kerneltest/kerneltest
+/metal/bench/bench
 
 # NOTE: cuda/kernel.cubin is intentionally COMMITTED — the binary embeds it via
 # #load at build time, so a CPU-only checkout builds without the CUDA toolkit.
