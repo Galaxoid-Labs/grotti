@@ -178,6 +178,7 @@ fenja_on_notify :: proc(f: ^Fenja, params: json.Array) {
 	job.en2_size = f.en2_size
 	job.target = f.target
 	job.net_target, _ = target_from_compact(job.nbits) // block threshold
+	f.net_difficulty = difficulty_from_nbits(job.nbits)
 
 	ring_publish(f.ring, job)
 	f.job_count += 1

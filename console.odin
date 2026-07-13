@@ -132,9 +132,24 @@ format_share :: proc(b: ^strings.Builder, c: Console, h, m, s: int, seq: int, ac
 
 // --- live status line -------------------------------------------------------
 
+// human_duration renders a rough expected time (seconds) as s / m / h / d.
+human_duration :: proc(b: ^strings.Builder, seconds: f64) {
+	switch {
+	case seconds < 90:
+		fmt.sbprintf(b, "%.0fs", seconds)
+	case seconds < 5400:
+		fmt.sbprintf(b, "%.0fm", seconds / 60)
+	case seconds < 172800:
+		fmt.sbprintf(b, "%.1fh", seconds / 3600)
+	case:
+		fmt.sbprintf(b, "%.1fd", seconds / 86400)
+	}
+}
+
 // format_status builds the repainting status line (no newline; the caller prefixes
-// '\r' on a TTY). The hashrate is the headline number (bold cyan).
-format_status :: proc(b: ^strings.Builder, c: Console, snap: Snapshot, hps: f64, gov_util: f64, job: string) {
+// '\r' on a TTY). The hashrate is the headline number (bold cyan). `eta`, if given,
+// is an already-formatted expected-time note (e.g. "share ~7m · block ~2.5d").
+format_status :: proc(b: ^strings.Builder, c: Console, snap: Snapshot, hps: f64, gov_util: f64, job: string, eta := "") {
 	strings.write_string(b, "◆ ")
 	rate := strings.builder_make()
 	defer strings.builder_destroy(&rate)
@@ -152,7 +167,13 @@ format_status :: proc(b: ^strings.Builder, c: Console, snap: Snapshot, hps: f64,
 	} else {
 		fmt.sbprintf(b, "  ·  gov %.1f%%", 100 * gov_util)
 	}
-	fmt.sbprintf(b, "  ·  up %s  ·  job %s", _hms(snap.uptime_s), job)
+	fmt.sbprintf(b, "  ·  up %s", _hms(snap.uptime_s))
+	if len(job) > 0 {
+		fmt.sbprintf(b, "  ·  job %s", job)
+	}
+	if len(eta) > 0 {
+		fmt.sbprintf(b, "  ·  %s", eta)
+	}
 }
 
 @(private = "file")

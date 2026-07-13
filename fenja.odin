@@ -29,7 +29,8 @@ Fenja :: struct {
 	en1:            [MAX_EN1]u8,
 	en1_len:        int,
 	en2_size:       int,
-	difficulty:     f64,
+	difficulty:     f64, // share difficulty (set_difficulty)
+	net_difficulty: f64, // network difficulty (from job nbits) — for a block ETA
 	target:         [32]u8,
 	have_diff:      bool,
 	subscribed:     bool,

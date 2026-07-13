@@ -195,8 +195,21 @@ main :: proc() {
 		hps := grotti.rate_sample(&sampler, st)
 		snap := grotti.stats_snapshot(st)
 		gov := cap_hps > 0 ? hps / cap_hps : -1 // -1 → "gov —" when uncapped
+
+		// Expected time to a share/block from the live rate: diff * 2^32 / hps.
+		// (Reading fenja's difficulty fields across threads is a benign display race.)
+		eta := strings.builder_make(context.temp_allocator)
+		if hps > 0 && fenja.difficulty > 0 {
+			strings.write_string(&eta, "share ~")
+			grotti.human_duration(&eta, fenja.difficulty * 4.294967296e9 / hps)
+			if fenja.net_difficulty > 0 {
+				strings.write_string(&eta, "  ·  block ~")
+				grotti.human_duration(&eta, fenja.net_difficulty * 4.294967296e9 / hps)
+			}
+		}
+
 		line := strings.builder_make(context.temp_allocator)
-		grotti.format_status(&line, g_console, snap, hps, gov, "")
+		grotti.format_status(&line, g_console, snap, hps, gov, "", strings.to_string(eta))
 		say(strings.to_string(line))
 		free_all(context.temp_allocator)
 	}

@@ -183,6 +183,10 @@ The pool sends share difficulty **1024**, so a share takes ~4.4×10¹² hashes:
 | CPU (full, uncapped) | ~168 MH/s | ~7 hours |
 | **GPU (GB10)** | ~2.6 GH/s | **~27 minutes** |
 
+The live status line shows a running estimate from your current rate and difficulty —
+`share ~28m · block ~2.5d` — so you can see roughly how long the wait is (it shrinks
+as the pool's vardiff lowers your share difficulty).
+
 You appear on the pool dashboard once your first share is accepted. A **block** (the
 hash also clears the ~133k network target) is far rarer — ~2.5 days of solo GPU time —
 but Grotti checks every hit against the network target locally and prints a bold-green
