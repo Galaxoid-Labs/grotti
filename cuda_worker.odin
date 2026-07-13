@@ -23,9 +23,9 @@ import "core:time"
 @(private)
 CUBIN := #load("cuda/kernel.cubin")
 
-GPU_LAUNCH :: u32(1) << 22 // ~4.2M nonces per launch; a few ms of GB10 work
+CUDA_LAUNCH :: u32(1) << 22 // ~4.2M nonces per launch; a few ms of GB10 work
 
-GPU_Worker :: struct {
+CUDA_Worker :: struct {
 	id:     int, // extranonce2 base, disjoint from the CPU workers
 	ring:   ^Job_Ring,
 	shares: ^Share_Queue,
@@ -34,21 +34,21 @@ GPU_Worker :: struct {
 	pacer:  Pacer,
 }
 
-GPU_Miner :: struct {
-	worker: ^GPU_Worker,
+CUDA_Miner :: struct {
+	worker: ^CUDA_Worker,
 	thread: ^thread.Thread,
 }
 
-// gpu_available reports whether a usable CUDA device is present, without committing.
-gpu_available :: proc() -> bool {
+// cuda_available reports whether a usable CUDA device is present, without committing.
+cuda_available :: proc() -> bool {
 	return cuda.cuda_probe().present
 }
 
-// gpu_mine_start spawns the GPU worker on its own thread (the CUDA context must be
+// cuda_mine_start spawns the CUDA worker on its own thread (the CUDA context must be
 // current on the launching thread, so init happens there). Shares the global quit.
-gpu_mine_start :: proc(ring: ^Job_Ring, shares: ^Share_Queue, st: ^Stats, id: int, cap_hps: f64, quit: ^u32) -> ^GPU_Miner {
-	m := new(GPU_Miner)
-	w := new(GPU_Worker)
+cuda_mine_start :: proc(ring: ^Job_Ring, shares: ^Share_Queue, st: ^Stats, id: int, cap_hps: f64, quit: ^u32) -> ^CUDA_Miner {
+	m := new(CUDA_Miner)
+	w := new(CUDA_Worker)
 	w.id = id
 	w.ring = ring
 	w.shares = shares
@@ -56,13 +56,13 @@ gpu_mine_start :: proc(ring: ^Job_Ring, shares: ^Share_Queue, st: ^Stats, id: in
 	w.quit = quit
 	pacer_init(&w.pacer, cap_hps)
 	m.worker = w
-	m.thread = thread.create(gpu_thread_proc)
+	m.thread = thread.create(cuda_thread_proc)
 	m.thread.data = w
 	thread.start(m.thread)
 	return m
 }
 
-gpu_mine_stop :: proc(m: ^GPU_Miner) {
+cuda_mine_stop :: proc(m: ^CUDA_Miner) {
 	intrinsics.atomic_store_explicit(m.worker.quit, 1, .Release)
 	thread.join(m.thread)
 	thread.destroy(m.thread)
@@ -71,14 +71,14 @@ gpu_mine_stop :: proc(m: ^GPU_Miner) {
 }
 
 @(private)
-gpu_thread_proc :: proc(t: ^thread.Thread) {
-	gpu_worker_run(cast(^GPU_Worker)t.data)
+cuda_thread_proc :: proc(t: ^thread.Thread) {
+	cuda_worker_run(cast(^CUDA_Worker)t.data)
 }
 
-// gpu_load_en2 encodes an extranonce2 value, rebuilds the header for it, folds the
+// cuda_load_en2 encodes an extranonce2 value, rebuilds the header for it, folds the
 // midstate, and uploads the job to the device.
 @(private)
-gpu_load_en2 :: proc(e: ^cuda.Engine, job: ^Job, ctr: u32, en2: []u8, cb: []u8) -> Header {
+cuda_load_en2 :: proc(e: ^cuda.Engine, job: ^Job, ctr: u32, en2: []u8, cb: []u8) -> Header {
 	n := len(en2)
 	for i in 0 ..< n {
 		en2[i] = u8(ctr >> uint(8 * (n - 1 - i))) // big-endian
@@ -92,10 +92,10 @@ gpu_load_en2 :: proc(e: ^cuda.Engine, job: ^Job, ctr: u32, en2: []u8, cb: []u8) 
 	return header
 }
 
-gpu_worker_run :: proc(w: ^GPU_Worker) {
+cuda_worker_run :: proc(w: ^CUDA_Worker) {
 	e: cuda.Engine
 	if !cuda.engine_init_data(&e, CUBIN) {
-		fmt.eprintln("cuda: engine init failed; GPU worker exiting")
+		fmt.eprintln("cuda: engine init failed; CUDA worker exiting")
 		return
 	}
 	defer cuda.engine_destroy(&e)
@@ -122,7 +122,7 @@ gpu_worker_run :: proc(w: ^GPU_Worker) {
 			local_gen = g
 			en2_len = min(job.en2_size, MAX_EN2)
 			en2_ctr = u32(w.id) // start this backend's en2 stream
-			header = gpu_load_en2(&e, &job, en2_ctr, en2[:en2_len], coinbase_buf[:])
+			header = cuda_load_en2(&e, &job, en2_ctr, en2[:en2_len], coinbase_buf[:])
 			nonce_base = 0
 			have_work = true
 		}
@@ -130,7 +130,7 @@ gpu_worker_run :: proc(w: ^GPU_Worker) {
 			continue
 		}
 
-		n := cuda.engine_scan(&e, nonce_base, GPU_LAUNCH, hits[:])
+		n := cuda.engine_scan(&e, nonce_base, CUDA_LAUNCH, hits[:])
 		for i in 0 ..< min(n, len(hits)) {
 			sh: Share
 			sh.gen = local_gen
@@ -146,16 +146,16 @@ gpu_worker_run :: proc(w: ^GPU_Worker) {
 			}
 		}
 
-		stats_add_hashes(w.stats, u64(GPU_LAUNCH))
+		stats_add_hashes(w.stats, u64(CUDA_LAUNCH))
 
 		old := nonce_base
-		nonce_base += GPU_LAUNCH
+		nonce_base += CUDA_LAUNCH
 		if nonce_base < old { // swept the full 2^32 for this en2 → roll to a fresh coinbase
 			en2_ctr += 1
-			header = gpu_load_en2(&e, &job, en2_ctr, en2[:en2_len], coinbase_buf[:])
+			header = cuda_load_en2(&e, &job, en2_ctr, en2[:en2_len], coinbase_buf[:])
 			nonce_base = 0
 		}
 
-		pacer_pace(&w.pacer, GPU_LAUNCH)
+		pacer_pace(&w.pacer, CUDA_LAUNCH)
 	}
 }

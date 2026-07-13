@@ -34,7 +34,7 @@ Options :: struct {
 	color:   string `usage:"color output: auto | always | never"`,
 }
 
-GPU_EST_HPS :: 2.56e9 // measured GB10 rate (CUDA); used for the cap split when running both
+CUDA_EST_HPS :: 2.56e9 // measured GB10 rate (CUDA); used for the cap split when running both
 
 // VK_EST_HPS is the MEASURED GB10-via-Vulkan rate (vulkan/bench at VK_LAUNCH), used only to
 // resolve a percentage -cap and split a global cap across backends; a raw-H/s cap is
@@ -87,7 +87,7 @@ main :: proc() {
 		fmt.eprintln("no backend selected (use -backend:cpu|cuda|vulkan or a comma-combo)")
 		return
 	}
-	if run_cuda && !grotti.gpu_available() {
+	if run_cuda && !grotti.cuda_available() {
 		fmt.eprintln("cuda backend requested but no CUDA device is available")
 		return
 	}
@@ -117,7 +117,7 @@ main :: proc() {
 	}
 	if run_cuda {
 		info := cuda.cuda_probe()
-		fmt.printfln("gpu: %s  ·  compute %d.%d  ·  %d SMs", cuda.device_name(&info), info.cc_major, info.cc_minor, info.mp_count)
+		fmt.printfln("cuda: %s  ·  compute %d.%d  ·  %d SMs", cuda.device_name(&info), info.cc_major, info.cc_minor, info.mp_count)
 	}
 	if run_vulkan {
 		vinfo := vkb.vulkan_probe()
@@ -134,9 +134,9 @@ main :: proc() {
 	// Estimated max hashrate of the selected backends — used to resolve a percentage
 	// -cap and to split a global cap across backends.
 	cpu_max := run_cpu ? f64(opts.threads) * PER_THREAD_HPS : 0
-	gpu_max := run_cuda ? GPU_EST_HPS : 0
+	cuda_max := run_cuda ? CUDA_EST_HPS : 0
 	vk_max := run_vulkan ? VK_EST_HPS : 0
-	total_max := cpu_max + gpu_max + vk_max
+	total_max := cpu_max + cuda_max + vk_max
 
 	// -cap: 0 = uncapped; 1..100 = percent of the estimated max; >100 = raw H/s.
 	cap_hps: f64
@@ -194,28 +194,28 @@ main :: proc() {
 	// Split the global cap across the selected backends by their estimated rate, so
 	// the total lands on cap_hps. Uncapped (cap_hps<=0) passes through to both.
 	cpu_cap := cap_hps
-	gpu_cap := cap_hps
+	cuda_cap := cap_hps
 	vk_cap := cap_hps
 	if cap_hps > 0 && total_max > 0 {
 		cpu_cap = cap_hps * cpu_max / total_max
-		gpu_cap = cap_hps * gpu_max / total_max
+		cuda_cap = cap_hps * cuda_max / total_max
 		vk_cap = cap_hps * vk_max / total_max
 	}
 
 	miner: ^grotti.Miner
-	gpu: ^grotti.GPU_Miner
-	vk: ^grotti.VK_Miner
+	cuda_miner: ^grotti.CUDA_Miner
+	vk_miner: ^grotti.VK_Miner
 	if run_cpu {
 		miner = grotti.mine_start(ring, shares, st, opts.threads, cpu_cap, &g_quit)
 	}
 	if run_cuda {
 		// CUDA en2 id starts past the CPU worker ids so the two never collide.
-		gpu = grotti.gpu_mine_start(ring, shares, st, opts.threads, gpu_cap, &g_quit)
+		cuda_miner = grotti.cuda_mine_start(ring, shares, st, opts.threads, cuda_cap, &g_quit)
 	}
 	if run_vulkan {
 		// Vulkan uses a widely-separated en2 base (grotti.VK_EN2_BASE) so it never
 		// overlaps the CPU workers or a concurrent CUDA backend.
-		vk = grotti.vk_mine_start(ring, shares, st, grotti.VK_EN2_BASE, vk_cap, &g_quit)
+		vk_miner = grotti.vk_mine_start(ring, shares, st, grotti.VK_EN2_BASE, vk_cap, &g_quit)
 	}
 
 	// Live status until Ctrl-C.
@@ -252,11 +252,11 @@ main :: proc() {
 	if miner != nil {
 		grotti.mine_stop(miner)
 	}
-	if gpu != nil {
-		grotti.gpu_mine_stop(gpu)
+	if cuda_miner != nil {
+		grotti.cuda_mine_stop(cuda_miner)
 	}
-	if vk != nil {
-		grotti.vk_mine_stop(vk)
+	if vk_miner != nil {
+		grotti.vk_mine_stop(vk_miner)
 	}
 	thread.join(ft)
 	snap := grotti.stats_snapshot(st)

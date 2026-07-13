@@ -5,7 +5,7 @@ package vkbackend
 // header foldings and a target, so `grotti` depends on `vkbackend` and never the reverse.
 // The governor stays ABOVE this, in grotti; this engine's only job is "scan this nonce
 // range, report every hit" (CLAUDE.md § 2b). The public API mirrors cuda.Engine 1:1 so
-// the worker glue in package grotti can be a near-copy of gpu_worker.odin.
+// the worker glue in package grotti can be a near-copy of cuda_worker.odin.
 //
 // Memory model: buffers are HOST_VISIBLE|HOST_COHERENT and persistently mapped. On the
 // GB10 (a unified-memory SoC that reports as an integrated GPU) that is also device-local,

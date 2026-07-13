@@ -242,8 +242,8 @@ Odin: a directory is a package.
   job.odin             #   Job, header build + byte-order conversions
   menja.odin           #   the stone: scalar + SIMD nonce scan, block detection
   menja_worker.odin    #   CPU worker threads (per-thread extranonce2)
-  gpu_worker.odin      #   CUDA worker: launches the kernel, rolls extranonce2
-  vk_worker.odin       #   Vulkan worker: same shape as gpu_worker
+  cuda_worker.odin      #   CUDA worker: launches the kernel, rolls extranonce2
+  vk_worker.odin       #   Vulkan worker: same shape as cuda_worker
   governor.odin        #   the global hashrate cap (token-bucket pacer)
   ring.odin            #   lock-free job publication (generation counter)
   share_queue.odin     #   bounded MPSC share hand-off

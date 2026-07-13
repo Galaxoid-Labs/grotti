@@ -543,7 +543,7 @@ Stats, logging, `--cap`, clean shutdown, README. **v1 ships here.**
 > Implemented on the GB10 (compute 12.1, `sm_121`), ~2.6 GH/s. `cuda/dynlib.odin`
 > (runtime probe), `cuda/kernel.cu` (midstate + register-resident schedule, built to
 > `cuda/kernel.cubin`, embedded via `#load`), `cuda/backend.odin` (host engine), and
-> `gpu_worker.odin` (peer to the CPU workers, with extranonce2 rolling since the GPU
+> `cuda_worker.odin` (peer to the CPU workers, with extranonce2 rolling since the GPU
 > sweeps 2^32 nonces in ~1.7s). Validated by `cuda/kerneltest` (reproduces block
 > 125552 and matches the CPU `scan_simd` hit-for-hit). Remaining headroom: constant
 > folding of the nonce-independent schedule words, `LOP3`, launch overlap.
@@ -585,7 +585,7 @@ same seam as CUDA.
   translates almost line-for-line.
 - **Host:** `metal/` package — `MTLDevice`, command queue, compute pipeline, buffers,
   `dispatchThreadgroups`, drain the hit buffer. A `metal_worker.odin` peer to
-  `gpu_worker.odin`, feeding the same ring / governor / share queue.
+  `cuda_worker.odin`, feeding the same ring / governor / share queue.
 - **Simpler than CUDA in two ways:** (1) compile the MSL from an embedded source string
   at runtime (`newLibraryWithSource`) — no fatbin, no per-arch `-gencode`, Metal
   handles GPU generations; (2) link `Metal.framework` directly (`foreign import`, not

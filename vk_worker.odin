@@ -4,7 +4,7 @@ package grotti
 // it pulls jobs from the ring, launches the compute pipeline governed by its pacer, and
 // drains hits into the same share queue. Fenja never knows which backend found a share.
 //
-// This is the near-twin of gpu_worker.odin (CUDA) — the two differ only in the engine
+// This is the near-twin of cuda_worker.odin (CUDA) — the two differ only in the engine
 // they drive (vkbackend.Engine vs cuda.Engine). The SPIR-V is embedded (#load) so the
 // binary is self-contained; the Vulkan loader itself is still dlopen'd at runtime
 // (vulkan/dynlib.odin), so a box with no Vulkan runs fine.
