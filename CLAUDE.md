@@ -474,6 +474,57 @@ First-run checklist:
 Watch for (unproven on Windows): `core:net` connect behavior, the repainting status line on
 `conhost`, and VT enabling on older Windows builds.
 
+## macOS / Metal (kickoff notes — CPU builds today, Metal is the missing GPU piece)
+
+The non-GPU miner already targets macOS: `odin check cli -target:darwin_arm64` and
+`-target:darwin_amd64` are clean, and the POSIX console/Ctrl-C files
+(`console_tty_unix.odin`, `cli/signal_unix.odin`) carry `darwin` in their `#+build` tags, so
+TTY color and clean shutdown work there too. What's missing is a **Metal** backend for
+Apple-Silicon *GPU* mining. Full design is in **DEVELOPMENT.md § Phase 9**; this is the
+practical order of operations when you're at the Mac.
+
+**Step 0 — prove the baseline before touching Metal.** On the Mac:
+
+```
+odin build cli -out:grotti -o:speed
+./grotti keygen                          # crypto RNG on macOS (SecRandom/getentropy)
+./grotti -backend:cpu -user:<addr>.<rig> # CPU SIMD mining — should just work
+```
+
+If that mines, everything except the GPU kernel is already good on macOS.
+
+**Building the Metal backend — `vulkan/` is now the proven template.** Follow the exact
+shape that worked for Vulkan:
+
+- `metal/` package with an `Engine` mirroring `vkbackend.Engine` / `cuda.Engine` **1:1**
+  (`engine_init_data` / `engine_load_job` / `engine_scan` / `engine_destroy`), so
+  `metal_worker.odin` is a near-copy of `vk_worker.odin` (ring → scan → drain → pacer).
+- Bindings: `vendor:darwin/Metal` + `Foundation` (Odin ships them). Link `Metal.framework`
+  directly — the "`dlopen`, never `foreign import`" rule guards against *optional* libraries
+  that may be absent; Metal is a guaranteed macOS system framework and a macOS build is
+  macOS-only, so linking it is correct (DEVELOPMENT.md § Phase 9).
+- Kernel: port `vulkan/sha256d.comp` (or `cuda/kernel.cu`) to `metal/sha256d.metal`. MSL is
+  C++-flavored (`atomic_uint`, `[[thread_position_in_grid]]`), so it translates almost
+  line-for-line. Compile it **at runtime** from an embedded source string
+  (`newLibraryWithSource:`) — no `metallib`, no Xcode build step, no per-arch flags.
+- **Heed the Vulkan perf lesson:** the naive shader was 2.2× too slow until the 64-round
+  loop was unrolled so the 16-word schedule stayed in registers. Unroll it in MSL from the
+  start (`#pragma unroll`) — don't rediscover this.
+- Buffers: `MTLResourceStorageModeShared` (Apple Silicon is unified memory, like the GB10 —
+  no staging copies; same model as the Vulkan Engine). Device: `MTLCreateSystemDefaultDevice()`
+  (one GPU on Apple Silicon → no discrete/integrated selection question, unlike Vulkan).
+- Governor stays ABOVE the backend (invariant #2b); Metal only scans and reports hits, and
+  `--backend` still never auto-selects it (invariant #2c).
+
+**Correctness gate first (invariant #4).** Write `metal/kerneltest` mirroring
+`vulkan/kerneltest`: reproduce block 125552's winning nonce **and** match `scan_simd`
+bit-for-bit over a range. Do **not** wire Metal into the miner until it is identical — a
+fast-but-wrong kernel is worse than none.
+
+**Verify once built:** `./grotti -backend:metal -user:<addr>.<rig>` names the Apple GPU,
+connects, and hashes (expect below a GB10, well above CPU). Then a `macos-latest` CI runner
+(build + `-help` smoke) can join the matrix, same as we did for Windows.
+
 ---
 
 ## Console output
