@@ -569,6 +569,31 @@ Portability, once CUDA has proven the seam. GLSL compute shader → SPIR-V,
 Expect materially more setup code than CUDA and somewhat lower throughput. Worth
 it only if Grotti needs to run on non-NVIDIA hardware — which today it doesn't.
 
+### Phase 9 — Metal backend (macOS / Apple Silicon, optional)
+
+Native GPU mining on Apple Silicon. Odin already ships the bindings
+(`vendor:darwin/Metal` + `Foundation` + `QuartzCore`), and this drops in behind the
+same seam as CUDA.
+
+- **Kernel:** an MSL (`.metal`) compute shader — a near-direct port of `cuda/kernel.cu`
+  (midstate + rolling schedule + atomic hit buffer). MSL is C++-flavored, so it
+  translates almost line-for-line.
+- **Host:** `metal/` package — `MTLDevice`, command queue, compute pipeline, buffers,
+  `dispatchThreadgroups`, drain the hit buffer. A `metal_worker.odin` peer to
+  `gpu_worker.odin`, feeding the same ring / governor / share queue.
+- **Simpler than CUDA in two ways:** (1) compile the MSL from an embedded source string
+  at runtime (`newLibraryWithSource`) — no fatbin, no per-arch `-gencode`, Metal
+  handles GPU generations; (2) link `Metal.framework` directly (`foreign import`, not
+  `dlopen`) — fine, because Metal is always present on macOS, so there's no
+  "refuse-to-start" concern.
+- **Platform note:** macOS-only (Metal is Apple's API), so a macOS build ships Metal
+  where a Linux build ships CUDA — they don't coexist in one binary. The rest of the
+  engine (SIMD CPU hasher, stratum, governor, keygen) is pure `core:` and already
+  cross-platform, so **CPU mining on macOS very likely works today** (untested); Metal
+  is the one missing piece for macOS *GPU* mining. Differentially tested against the
+  scalar hasher, same discipline as CUDA. Throughput on an M-series GPU: below a GB10,
+  well above CPU.
+
 ---
 
 ## Test plan

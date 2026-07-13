@@ -29,6 +29,7 @@ dependency; runs on a box with no GPU.
 | **v1** | `cpu` | — | Pure Odin, scalar → midstate → SIMD. **Default. Done.** |
 | **v2** | `cuda` | `libcuda.so.1` | NVIDIA / GB10. **Done — ~2.6 GH/s.** (`cuda/`) |
 | **v2** | `vulkan` | `libvulkan.so.1` | Portable. `vendor:vulkan`. Not started. |
+| *opt* | `metal` | `Metal.framework` | macOS / Apple Silicon. Roadmap (DEVELOPMENT.md § Phase 9). |
 | *opt* | `opencl` | `libOpenCL.so.1` | Widest reach. Optional. Not started. |
 
 GPU libraries are `dlopen`'d via `core:dynlib` — **never `foreign import`**, which
