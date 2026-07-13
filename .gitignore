@@ -21,6 +21,9 @@
 # Do not add it here. Ignore only stray/alternate cubins:
 /cuda/*.ptx
 
+# Local runtime config (each deployment differs). The template is grotti.conf.example.
+/grotti.conf
+
 # Editor / OS noise.
 .DS_Store
 Thumbs.db

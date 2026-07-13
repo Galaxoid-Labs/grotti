@@ -51,7 +51,9 @@ main :: proc() {
 		cap     = 500_000,
 		color   = "auto",
 	}
-	flags.parse_or_exit(&opts, os.args)
+	conf_path, conf_loaded := load_conf(&opts) // grotti.conf overrides defaults...
+	flags.parse_or_exit(&opts, os.args) // ...and CLI flags override the conf
+	pool_addr := normalize_pool(opts.pool)
 
 	run_cpu := strings.contains(opts.backend, "cpu")
 	run_cuda := strings.contains(opts.backend, "cuda")
@@ -73,7 +75,10 @@ main :: proc() {
 	}
 	g_console = grotti.console_init(mode)
 
-	fmt.printfln("grotti 0.1.0  ·  backend=%s  ·  pool=%s", opts.backend, opts.pool)
+	fmt.printfln("grotti 0.1.0  ·  backend=%s  ·  pool=%s", opts.backend, pool_addr)
+	if conf_loaded {
+		fmt.printfln("config: %s", conf_path)
+	}
 	if run_cuda {
 		info := cuda.cuda_probe()
 		fmt.printfln("gpu: %s  ·  compute %d.%d  ·  %d SMs", cuda.device_name(&info), info.cc_major, info.cc_minor, info.mp_count)
@@ -125,7 +130,7 @@ main :: proc() {
 	fenja.shares = shares
 	fenja.stats = st
 	fenja.quit = &g_quit
-	fenja.pool_addr = opts.pool
+	fenja.pool_addr = pool_addr
 	fenja.auth_user = opts.user
 	fenja.on_event = on_event
 	fenja.on_difficulty = on_difficulty

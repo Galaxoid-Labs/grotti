@@ -70,12 +70,34 @@ network hashrate. Press **Ctrl-C** to stop cleanly.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-pool:host:port` | `pool.drivechain.info:3334` | stratum pool |
+| `-pool:ENDPOINT` | `pool.drivechain.info:3334` | stratum pool — `host:port` or `stratum+tcp://host:port` |
 | `-user:addr.rig` | *(a demo address)* | `<thunder-addr>.<rig>` for `mining.authorize` |
 | `-backend:LIST` | `cpu` | `cpu` \| `cuda` \| `cpu,cuda` — never auto-selects the GPU |
 | `-threads:N` | `4` | CPU worker threads |
 | `-cap:N` | `500000` | **`0`** = uncapped · **`1–100`** = percent of max (e.g. `-cap:25`) · **`>100`** = raw H/s |
 | `-color:MODE` | `auto` | `auto` \| `always` \| `never` |
+
+### Config file
+
+Grotti reads an INI-style **`grotti.conf`** from the directory containing the binary,
+if present. Its keys match the flags, and precedence is
+**built-in defaults < `grotti.conf` < command-line flags** — so the config sets your
+usual setup and a flag overrides it for a one-off run. Copy
+[`grotti.conf.example`](grotti.conf.example) to `grotti.conf` and edit:
+
+```ini
+# grotti.conf (next to the binary)
+pool    = stratum+tcp://pool.drivechain.info:3334
+user    = <thunder-addr>.<rig>
+backend = cuda
+threads = 4
+cap     = 50        # 0=uncapped, 1-100=percent, >100=H/s
+color   = auto
+```
+
+With that in place, a bare `./grotti` runs your configured setup; `./grotti -cap:100`
+still overrides just the cap. (The startup banner prints `config: <path>` when a file
+is loaded.)
 
 **GPU backend:** the CUDA driver is `dlopen`'d at runtime — no build-time CUDA
 dependency, and a GPU-less box runs fine. It's opt-in (`-backend:cuda`); a bare

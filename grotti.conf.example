@@ -1,0 +1,22 @@
+# grotti.conf — copy this to `grotti.conf` next to the grotti binary.
+#
+# These values override the built-in defaults; command-line flags override these.
+# Keys match the CLI flags. Lines starting with '#' or ';' are comments.
+
+# Stratum pool endpoint. Accepts "host:port" or "stratum+tcp://host:port".
+pool = stratum+tcp://pool.drivechain.info:3334
+
+# Stratum username: <thunder-addr>.<rig>
+user = YOUR_THUNDER_ADDRESS.rig0
+
+# Backend: cpu | cuda | cpu,cuda  (never auto-selects the GPU)
+backend = cuda
+
+# CPU worker threads (only used when the backend includes cpu)
+threads = 4
+
+# Cap: 0 = uncapped, 1-100 = percent of estimated max (e.g. 50), >100 = raw H/s
+cap = 50
+
+# Color: auto | always | never
+color = auto
