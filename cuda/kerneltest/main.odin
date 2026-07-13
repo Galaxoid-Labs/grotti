@@ -15,7 +15,9 @@ import "core:encoding/endian"
 import "core:fmt"
 import "core:slice"
 
-CUBIN :: "/home/jdavis/Development/grotti/cuda/kernel.cubin"
+// Embedded at compile time (relative to this source file) so the harness runs
+// from any CWD on any OS — matches how the real backend loads it (cuda_worker.odin).
+CUBIN := #load("../kernel.cubin")
 
 hex32 :: proc(s: string) -> (out: [32]u8) {
 	nib :: proc(c: u8) -> u8 {
@@ -48,7 +50,7 @@ main :: proc() {
 	h := grotti.serialize_header(1, prev, merkle, 1305998791, 0x1a44b9f2, 0)
 
 	e: cuda.Engine
-	if !cuda.engine_init(&e, CUBIN) {
+	if !cuda.engine_init_data(&e, CUBIN) {
 		fmt.eprintln("engine init failed")
 		return
 	}

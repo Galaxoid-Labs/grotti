@@ -37,13 +37,24 @@ console_init :: proc(mode: Color_Mode) -> (c: Console) {
 	case .Auto:
 		c.color = c.tty && !_env_set("NO_COLOR") && _term() != "dumb"
 	}
-	// On Windows, ANSI SGR only works after opting the console into virtual-terminal
-	// processing; a no-op elsewhere. _stdout_is_tty / _enable_ansi are defined per-OS in
-	// console_tty_unix.odin and console_tty_windows.odin.
+	// On Windows a console needs its output code page set to UTF-8 or Grotti's glyphs
+	// (◆ · ✔ ✘ —) render as mojibake; this is independent of color, so it runs for any
+	// real console. ANSI SGR additionally needs virtual-terminal processing opted in.
+	// Both are no-ops on POSIX. Defined per-OS in console_tty_{unix,windows}.odin. Pair
+	// console_init with console_restore at shutdown so the code page is put back.
+	if c.tty {
+		_enable_utf8()
+	}
 	if c.color {
 		_enable_ansi()
 	}
 	return
+}
+
+// console_restore undoes any process-wide console state console_init changed (on Windows,
+// the output code page). Call it once on shutdown. A no-op on POSIX and when unchanged.
+console_restore :: proc() {
+	_restore_console()
 }
 
 @(private = "file")

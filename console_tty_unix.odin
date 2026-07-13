@@ -18,3 +18,13 @@ _stdout_is_tty :: proc() -> bool {
 _enable_ansi :: proc() {
 	// POSIX terminals interpret ANSI SGR natively — nothing to enable.
 }
+
+@(private)
+_enable_utf8 :: proc() {
+	// POSIX terminals are UTF-8 by locale — there is no console code page to switch.
+}
+
+@(private)
+_restore_console :: proc() {
+	// Nothing was changed on POSIX; the Windows twin restores its saved code page.
+}

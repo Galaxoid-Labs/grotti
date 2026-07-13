@@ -134,6 +134,6 @@ menja_worker_run :: proc(w: ^Worker) {
 
 		stats_add_hashes(w.stats, u64(BATCH))
 		nonce_base += BATCH // wraps at 2^32; batches tile it exactly
-		pacer_pace(&w.pacer, BATCH)
+		pacer_pace(&w.pacer, BATCH, w.quit)
 	}
 }

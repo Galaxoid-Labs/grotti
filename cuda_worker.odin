@@ -156,6 +156,6 @@ cuda_worker_run :: proc(w: ^CUDA_Worker) {
 			nonce_base = 0
 		}
 
-		pacer_pace(&w.pacer, CUDA_LAUNCH)
+		pacer_pace(&w.pacer, CUDA_LAUNCH, w.quit)
 	}
 }

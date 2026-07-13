@@ -13,6 +13,7 @@ package grotti
 // separated from the effect (the sleep) so it can be proven to cap deterministically
 // (Test plan #5) without a real-time run.
 
+import "base:intrinsics"
 import "core:time"
 
 // Governor holds the one global cap. cap_hps == 0 is UNCAPPED — a first-class mode
@@ -122,13 +123,28 @@ pacer_advance :: proc(p: ^Pacer, now_ns: i64, n: u32) -> (sleep_ns: i64) {
 	return i64(-p.tokens / p.rate_hps * 1e9)
 }
 
+// PACER_SLICE bounds a single sleep syscall so a set quit flag is noticed within one
+// slice rather than after a whole throttle sleep. It matters because the owed sleep
+// scales with the turn size: a GPU turn (millions of nonces) at a low cap can owe tens
+// of SECONDS, and shutdown joins the worker thread — without slicing, Ctrl-C would hang
+// for that long. 50 ms is well below human perception yet coarse enough to stay cheap.
+@(private)
+PACER_SLICE :: i64(50 * time.Millisecond)
+
 // pacer_pace is the hot-loop wrapper: read the monotonic clock, run the pure step,
 // and sleep the difference. Called once per turn (a batch of nonces), never inside
 // the inner loop — its only syscall is the sleep, and only when actually throttling.
-pacer_pace :: proc(p: ^Pacer, n: u32) {
+//
+// The sleep is sliced and rechecks `quit` between slices so a shutdown request is
+// honored promptly. Breaking early does not leak cap: the owed sleep is recorded as a
+// negative token balance in pacer_advance, so any unpaid remainder is simply carried
+// (and, on quit, irrelevant — the worker is exiting).
+pacer_pace :: proc(p: ^Pacer, n: u32, quit: ^u32) {
 	now_ns := i64(time.tick_diff(p.start, time.tick_now()))
 	d := pacer_advance(p, now_ns, n)
-	if d > 0 {
-		time.sleep(time.Duration(d))
+	for d > 0 && intrinsics.atomic_load_explicit(quit, .Acquire) == 0 {
+		chunk := min(d, PACER_SLICE)
+		time.sleep(time.Duration(chunk))
+		d -= chunk
 	}
 }

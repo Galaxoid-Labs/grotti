@@ -92,10 +92,11 @@ test_pacer_caps_in_real_time :: proc(t: ^testing.T) {
 	p: Pacer
 	pacer_init(&p, CAP)
 
+	no_quit: u32 // never set: the pacer sleeps its full owed time, as before
 	start := time.tick_now()
 	total: u64
 	for {
-		pacer_pace(&p, BATCH)
+		pacer_pace(&p, BATCH, &no_quit)
 		total += u64(BATCH)
 		if time.duration_seconds(time.tick_diff(start, time.tick_now())) >= 1.0 {
 			break

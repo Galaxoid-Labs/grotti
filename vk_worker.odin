@@ -167,6 +167,6 @@ vk_worker_run :: proc(w: ^VK_Worker) {
 			nonce_base = 0
 		}
 
-		pacer_pace(&w.pacer, VK_LAUNCH)
+		pacer_pace(&w.pacer, VK_LAUNCH, w.quit)
 	}
 }

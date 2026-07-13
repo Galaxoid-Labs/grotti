@@ -1,5 +1,6 @@
 # Compiled Odin binaries (executables have no extension, so list the ones we build).
 /grotti
+/grotti.exe
 /grotti_bin
 *.bin
 *.exe

@@ -267,6 +267,7 @@ main :: proc() {
 		snap.rejected,
 		snap.uptime_s,
 	)
+	grotti.console_restore() // put the console code page back (Windows); no-op elsewhere
 }
 
 fenja_thread_proc :: proc(t: ^thread.Thread) {

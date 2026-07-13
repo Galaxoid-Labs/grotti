@@ -20,6 +20,22 @@ are each differentially tested against `core:crypto/sha2` / the CPU scan.
 
 ---
 
+## Disclaimer
+
+**Use at your own risk.** Grotti is provided "as is", without warranty of any kind,
+express or implied. Mining runs your CPU and/or GPU at sustained high load, which
+generates heat and draws power; on inadequately cooled, powered, or maintained
+hardware this can cause thermal throttling, instability, accelerated wear, or
+failure. **You are solely responsible for your hardware, its cooling and power, and
+for the settings you choose** (thread count, hashrate cap, and running uncapped in
+particular). The authors and contributors accept **no liability** for any damage,
+data loss, hardware failure, downtime, cost, or other harm arising from the use or
+misuse of this software. By running Grotti you accept these risks. Start with the
+gentle defaults, monitor temperatures, and raise the cap only if you understand the
+thermal and electrical limits of your machine.
+
+---
+
 ## Build
 
 ```sh
@@ -29,6 +45,16 @@ odin build cli -out:grotti -o:speed     # -o:speed is mandatory for hashrate
 > Don't name the binary `grotti` if you also run `odin test .` in this directory —
 > the test runner's temporary binary is named after the package and will clobber it.
 > Use `-out:bin/grotti` or any other name.
+
+> **Windows: antivirus may quarantine the binary.** Grotti is a cryptocurrency miner,
+> so Microsoft Defender (and other AV) can flag it as *riskware* / *CoinMiner* on
+> heuristics and silently quarantine `grotti.exe` — often right after it's built, so it
+> may seem to "disappear" or refuse to run. This is a heuristic match on what the program
+> *is*, not a sign it's compromised; the source is here and the binary is what you built.
+> If it happens, restore the file from Defender's protection history and add a
+> **folder exclusion** for your build directory (Windows Security → Virus & threat
+> protection → Manage settings → Exclusions), or build/run from an already-excluded path.
+> Prefer a scoped exclusion over disabling real-time protection.
 
 ## Quick start
 
