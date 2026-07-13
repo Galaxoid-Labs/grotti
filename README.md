@@ -144,8 +144,9 @@ about 70% of the CUDA kernel. The remaining gap is the driver's SPIR-V→SASS co
 nvcc plus the lack of hand-tuned `LOP3`; further gains would need subgroup/occupancy tuning.
 
 **Portability / CI:** the CPU and Vulkan backends are cross-platform. The only OS-specific
-code (TTY detection + color enabling, Ctrl-C) lives in per-OS files. The CUDA backend
-remains Linux-only (`libcuda.so.1`); on Windows, Vulkan covers the NVIDIA card too. A native
+code (TTY detection + color enabling, Ctrl-C) lives in per-OS files. The CUDA loader picks
+its driver per-OS — `libcuda.so.1` on Linux, `nvcuda.dll` on Windows (the Windows path is
+cross-checked, not yet run); Vulkan also drives the NVIDIA card on Windows. A native
 Windows `.exe` links on a Windows host (Odin can't cross-link one from Linux, though it
 type-checks the target), so CI builds it on a `windows-latest` runner. `.github/workflows/ci.yml`
 tests and builds `grotti` for `linux-x86_64`, `linux-arm64`, and `windows-x86_64` on every

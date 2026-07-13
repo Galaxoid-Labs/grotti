@@ -446,9 +446,12 @@ odin build cli -out:grotti.exe -o:speed
 - **Use `-backend:vulkan` on Windows.** Modern NVIDIA and AMD drivers ship `vulkan-1.dll`
   and their ICDs, so no install is needed. Vulkan drives **both** GPU vendors from one
   backend.
-- **`-backend:cuda` does not work on Windows yet.** `cuda/dynlib.odin` hardcodes
-  `libcuda.so.1`; the Windows CUDA driver is `nvcuda.dll`. A per-OS name (like Vulkan's)
-  is a small follow-up — but unnecessary, since Vulkan already drives the NVIDIA card.
+- **`-backend:cuda` targets `nvcuda.dll` on Windows** (the loader picks the driver library
+  name per-OS, same as Vulkan). Cross-checked to compile for `windows_amd64`, not yet run —
+  verify on the NVIDIA dGPU. CUDA only enumerates NVIDIA devices, so the AMD iGPU is invisible
+  to it and there is no device-selection question (unlike Vulkan). The committed fatbin
+  (`cuda/kernel.cubin`) is GPU code (SASS/PTX), so it loads on Windows unchanged. Full CUDA
+  speed (~2.6 GH/s class) beats the Vulkan path, so on the NVIDIA card prefer `-backend:cuda`.
 - **AMD iGPU + NVIDIA dGPU box:** the device selector must pick the **NVIDIA discrete**
   (score 4) over the AMD integrated (score 3). Startup should print
   `vulkan: NVIDIA … · selected of 2 device(s)` — if it names the AMD part, the selector is
@@ -461,10 +464,12 @@ First-run checklist:
 3. `odin run vulkan/kerneltest` — the differential test PASSes on real hardware.
 4. `grotti.exe -backend:vulkan -user:<addr>.<rig>` — the `vulkan:` line names the **NVIDIA**
    device, it connects, hashes, and shares land.
-5. **Color:** run in Windows Terminal — ANSI SGR should render (VT enabled in `_enable_ansi`).
+5. `grotti.exe -backend:cuda -user:<addr>.<rig>` — the driver loads via `nvcuda.dll`, the
+   `cuda:` line names the NVIDIA card, and it hashes at full CUDA speed (~2.6 GH/s class).
+6. **Color:** run in Windows Terminal — ANSI SGR should render (VT enabled in `_enable_ansi`).
    Legacy `conhost` without VT support degrades to plain text, which is acceptable.
-6. **Ctrl-C:** clean shutdown (the console control handler sets the quit flag).
-7. **Status line:** the in-place `\r` repaint should look right, not smear.
+7. **Ctrl-C:** clean shutdown (the console control handler sets the quit flag).
+8. **Status line:** the in-place `\r` repaint should look right, not smear.
 
 Watch for (unproven on Windows): `core:net` connect behavior, the repainting status line on
 `conhost`, and VT enabling on older Windows builds.

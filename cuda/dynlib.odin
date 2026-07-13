@@ -58,10 +58,15 @@ CUDA_API :: struct {
 	__handle:                      dynlib.Library,
 }
 
-// cuda_available loads libcuda.so.1 and binds the driver API. Returns false (rather
+// The CUDA driver library is loaded by its per-OS name: nvcuda.dll on Windows, libcuda.so.1
+// on Linux. Same Driver API and same exported symbols either way (cuInit, cuCtxCreate_v2, …),
+// so only the filename differs. Only linux and windows are targets.
+CUDA_LIB :: "nvcuda.dll" when ODIN_OS == .Windows else "libcuda.so.1"
+
+// cuda_available loads the CUDA driver and binds the driver API. Returns false (rather
 // than crashing) when the driver is not present — the whole point of dlopen.
 cuda_available :: proc(api: ^CUDA_API) -> bool {
-	count, ok := dynlib.initialize_symbols(api, "libcuda.so.1")
+	count, ok := dynlib.initialize_symbols(api, CUDA_LIB)
 	return ok && count > 0
 }
 
