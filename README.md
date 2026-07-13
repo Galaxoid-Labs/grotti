@@ -1,8 +1,9 @@
 # Grotti
 
-A Stratum V1 miner in pure Odin — CPU (SIMD) and NVIDIA GPU (CUDA) backends in one
-binary, with no build-time GPU or C dependency (the CUDA driver is loaded at runtime).
-Connects to LayerTwo Labs' `simplepool` on the BIP300/301 drivechain test network.
+A Stratum V1 miner in pure Odin — CPU (SIMD), NVIDIA GPU (CUDA), and portable GPU
+(Vulkan) backends in one binary, with no build-time GPU or C dependency (GPU drivers are
+loaded at runtime). Connects to LayerTwo Labs' `simplepool` on the BIP300/301 drivechain
+test network.
 
 > In *Grottasöngr*, King Fróði's mill **Grotti** grinds out gold, turned by two
 > giantesses who are never allowed to rest. There is no better description of
@@ -12,8 +13,11 @@ Connects to LayerTwo Labs' `simplepool` on the BIP300/301 drivechain test networ
 **Status:** working, verified against a live pool session. It connects, authorizes,
 receives real jobs, hashes them under a hashrate governor, submits shares, and flags a
 found block. The CPU SIMD engine does ~8.4 MH/s per thread; the CUDA backend does
-~2.6 GH/s on an NVIDIA GB10. 56 tests pass, including the optimized CPU and GPU hashers
-differentially tested against `core:crypto/sha2`.
+~2.6 GH/s on an NVIDIA GB10. A portable **Vulkan** backend (NVIDIA/AMD/Intel) is wired in
+and correct — ~0.86 GH/s on the same GB10 today, with a bring-up shader whose SHA
+schedule is not yet register-resident (perf tuning is a tracked follow-on). 56 tests
+pass, and the CPU, CUDA, and Vulkan hashers are each differentially tested against
+`core:crypto/sha2` / the CPU scan.
 
 ---
 
@@ -52,6 +56,9 @@ Press **Ctrl-C** to stop cleanly.
 # Full tilt (uncapped)
 ./grotti -backend:cuda -cap:0
 
+# Portable GPU via Vulkan (NVIDIA / AMD / Intel) — picks the fastest device
+./grotti -backend:vulkan -cap:25
+
 # CPU: more threads at 50%
 ./grotti -threads:8 -cap:50
 
@@ -76,7 +83,7 @@ Press **Ctrl-C** to stop cleanly.
 |---|---|---|
 | `-pool:ENDPOINT` | `pool.drivechain.info:3334` | stratum pool — `host:port` or `stratum+tcp://host:port` |
 | `-user:addr.rig` | **required** | `<thunder-addr>.<rig>` for `mining.authorize` (or set in `grotti.conf`) |
-| `-backend:LIST` | `cpu` | `cpu` \| `cuda` \| `cpu,cuda` — never auto-selects the GPU |
+| `-backend:LIST` | `cpu` | `cpu` \| `cuda` \| `vulkan` \| comma-combo — never auto-selects the GPU |
 | `-threads:N` | `4` | CPU worker threads |
 | `-cap:N` | `500000` | **`0`** = uncapped · **`1–100`** = percent of max (e.g. `-cap:25`) · **`>100`** = raw H/s |
 | `-color:MODE` | `auto` | `auto` \| `always` \| `never` |
@@ -122,10 +129,29 @@ cd cuda && nvcc -fatbin \
   kernel.cu -o kernel.cubin
 ```
 
-**CI / releases:** `.github/workflows/ci.yml` tests and builds `grotti` for
-`linux-x86_64` and `linux-arm64` on every push (Odin only — it embeds the committed
-fatbin), and publishes both binaries as a GitHub Release on a `v*` tag. Currently
-**Linux-only** (`core:sys/posix`, `libcuda.so.1`); Windows/macOS would need porting.
+**Vulkan backend:** portable across NVIDIA / AMD / Intel — one backend for every GPU
+vendor. The loader (`libvulkan.so.1` / `vulkan-1.dll`) is `dlopen`'d at runtime like
+CUDA, so a Vulkan-less box runs fine; it's opt-in (`-backend:vulkan`), and on a machine
+with several GPUs it selects the fastest (discrete > integrated > virtual > CPU) and
+*reports* the choice — it never silently picks. The compute shader ships as a committed,
+portable **SPIR-V** blob at `vulkan/sha256d.spv`, embedded via `#load`, so `odin build`
+produces a Vulkan-capable binary with no shader toolchain. Rebuild it only if you edit
+`vulkan/sha256d.comp` (needs `glslangValidator` from `glslang-tools`):
+```sh
+cd vulkan && glslangValidator -V sha256d.comp -o sha256d.spv
+```
+The Vulkan path is correct (differentially tested) but currently ~1/3 of CUDA on the same
+GB10 — the bring-up shader is compute-bound because its SHA message schedule isn't kept in
+registers; closing that gap is a tracked follow-on.
+
+**Portability / CI:** the CPU and Vulkan backends are cross-platform. The only OS-specific
+code (TTY detection + color enabling, Ctrl-C) lives in per-OS files, and the tree
+type-checks clean for `linux-{x86_64,arm64}` and `windows-x86_64`. The CUDA backend
+remains Linux-only (`libcuda.so.1`); on Windows, Vulkan covers NVIDIA too. A native
+Windows `.exe` must be built **on** Windows — Odin can't yet cross-link a Windows binary
+from Linux, though it type-checks the target. `.github/workflows/ci.yml` tests and builds
+`grotti` for `linux-x86_64` and `linux-arm64` on every push and publishes both on a `v*`
+tag.
 
 ---
 
@@ -201,9 +227,10 @@ but Grotti checks every hit against the network target locally and prints a bold
 ## Tests
 
 ```sh
-odin test .              # engine: target, job, governor, ring, fenja, stats, ...
-odin test sha256d        # the optimized CPU hasher vs core:crypto/sha2
-odin run cuda/kerneltest # GPU kernel: reproduces a known block, matches the CPU
+odin test .                # engine: target, job, governor, ring, fenja, stats, ...
+odin test sha256d          # the optimized CPU hasher vs core:crypto/sha2
+odin run cuda/kerneltest   # CUDA kernel: reproduces a known block, matches the CPU
+odin run vulkan/kerneltest # Vulkan shader: reproduces a known block, matches the CPU
 ```
 
 ## Layout
@@ -217,6 +244,7 @@ Odin: a directory is a package.
   menja.odin           #   the stone: scalar + SIMD nonce scan, block detection
   menja_worker.odin    #   CPU worker threads (per-thread extranonce2)
   gpu_worker.odin      #   CUDA worker: launches the kernel, rolls extranonce2
+  vk_worker.odin       #   Vulkan worker: same shape as gpu_worker
   governor.odin        #   the global hashrate cap (token-bucket pacer)
   ring.odin            #   lock-free job publication (generation counter)
   share_queue.odin     #   bounded MPSC share hand-off
@@ -227,6 +255,9 @@ sha256d/               # package sha256d — scalar + midstate + SIMD, isolated
 cuda/                  # package cuda — CUDA driver (dlopen) + host engine
   kernel.cu            #   the only non-Odin file; built to kernel.cubin (committed)
   probe/ kerneltest/ bench/   #   FFI probe, correctness gate, throughput
+vulkan/                # package vkbackend — Vulkan loader (dlopen) + compute engine
+  sha256d.comp         #   GLSL compute shader; built to sha256d.spv (committed)
+  probe/ kerneltest/ bench/   #   loader probe, correctness gate, throughput
 cli/                   # package main -> the grotti binary
 capture/               # throwaway: record a raw pool session
 ```

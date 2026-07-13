@@ -11,7 +11,6 @@ package grotti
 import "core:fmt"
 import "core:os"
 import "core:strings"
-import "core:sys/posix"
 import "core:time"
 
 Color_Mode :: enum {
@@ -38,12 +37,13 @@ console_init :: proc(mode: Color_Mode) -> (c: Console) {
 	case .Auto:
 		c.color = c.tty && !_env_set("NO_COLOR") && _term() != "dumb"
 	}
+	// On Windows, ANSI SGR only works after opting the console into virtual-terminal
+	// processing; a no-op elsewhere. _stdout_is_tty / _enable_ansi are defined per-OS in
+	// console_tty_unix.odin and console_tty_windows.odin.
+	if c.color {
+		_enable_ansi()
+	}
 	return
-}
-
-@(private = "file")
-_stdout_is_tty :: proc() -> bool {
-	return bool(posix.isatty(posix.FD(os.fd(os.stdout))))
 }
 
 @(private = "file")

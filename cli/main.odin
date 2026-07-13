@@ -10,6 +10,7 @@ package main
 
 import grotti ".."
 import cuda "../cuda"
+import vkb "../vulkan"
 import keygen "../keygen"
 import "base:intrinsics"
 import "core:flags"
@@ -17,7 +18,6 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:sync"
-import "core:sys/posix"
 import "core:thread"
 import "core:time"
 
@@ -28,13 +28,20 @@ VERSION :: #config(GROTTI_VERSION, "0.1.0")
 Options :: struct {
 	pool:    string `usage:"pool host:port"`,
 	user:    string `usage:"stratum username: <thunder-addr>.<rig> (required)"`,
-	backend: string `usage:"cpu | cuda | cpu,cuda (default cpu — never auto-selects GPU)"`,
+	backend: string `usage:"cpu | cuda | vulkan | comma-combo (default cpu — never auto-selects GPU)"`,
 	threads: int    `usage:"number of CPU worker threads"`,
 	cap:     f64    `usage:"cap: 0=uncapped, 1-100=percent of max (e.g. 25), >100=raw H/s"`,
 	color:   string `usage:"color output: auto | always | never"`,
 }
 
-GPU_EST_HPS :: 2.56e9 // measured GB10 rate; used for the cap split when running both
+GPU_EST_HPS :: 2.56e9 // measured GB10 rate (CUDA); used for the cap split when running both
+
+// VK_EST_HPS is the MEASURED GB10-via-Vulkan rate (vulkan/bench), used only to resolve a
+// percentage -cap and split a global cap across backends; a raw-H/s cap is unaffected. Note
+// this is ~1/3 of the CUDA path (2.56 GH/s): the bring-up shader is compute-bound because
+// its SHA schedule is not register-resident. Closing that gap is a shader-optimization
+// follow-on (see sha256d.comp PERF note); update this constant when it lands.
+VK_EST_HPS :: 0.86e9
 
 PER_THREAD_HPS :: 8.41e6 // measured single-thread SIMD rate; used only for a CPU estimate
 
@@ -42,10 +49,6 @@ g_quit: u32 // atomic; SIGINT sets it, stopping Fenja and every worker
 g_console: grotti.Console
 g_print: sync.Mutex // serialize stdout across the Fenja and main threads
 g_net_logged: bool // log the real network difficulty once, on the first job
-
-sigint_handler :: proc "c" (sig: posix.Signal) {
-	intrinsics.atomic_store_explicit(&g_quit, 1, .Release)
-}
 
 main :: proc() {
 	// `core:flags` only knows the flag struct, not our subcommands, so we handle help
@@ -80,12 +83,17 @@ main :: proc() {
 
 	run_cpu := strings.contains(opts.backend, "cpu")
 	run_cuda := strings.contains(opts.backend, "cuda")
-	if !run_cpu && !run_cuda {
-		fmt.eprintln("no backend selected (use -backend:cpu|cuda|cpu,cuda)")
+	run_vulkan := strings.contains(opts.backend, "vulkan")
+	if !run_cpu && !run_cuda && !run_vulkan {
+		fmt.eprintln("no backend selected (use -backend:cpu|cuda|vulkan or a comma-combo)")
 		return
 	}
 	if run_cuda && !grotti.gpu_available() {
 		fmt.eprintln("cuda backend requested but no CUDA device is available")
+		return
+	}
+	if run_vulkan && !grotti.vk_available() {
+		fmt.eprintln("vulkan backend requested but no Vulkan device is available")
 		return
 	}
 	if opts.user == "" {
@@ -112,12 +120,24 @@ main :: proc() {
 		info := cuda.cuda_probe()
 		fmt.printfln("gpu: %s  ·  compute %d.%d  ·  %d SMs", cuda.device_name(&info), info.cc_major, info.cc_minor, info.mp_count)
 	}
+	if run_vulkan {
+		vinfo := vkb.vulkan_probe()
+		fmt.printfln(
+			"vulkan: %s [%s]  ·  api %d.%d  ·  selected of %d device(s)",
+			vkb.device_name(&vinfo),
+			vkb.vendor_name(vinfo.vendor_id),
+			vinfo.api_major,
+			vinfo.api_minor,
+			vinfo.device_count,
+		)
+	}
 
 	// Estimated max hashrate of the selected backends — used to resolve a percentage
 	// -cap and to split a global cap across backends.
 	cpu_max := run_cpu ? f64(opts.threads) * PER_THREAD_HPS : 0
 	gpu_max := run_cuda ? GPU_EST_HPS : 0
-	total_max := cpu_max + gpu_max
+	vk_max := run_vulkan ? VK_EST_HPS : 0
+	total_max := cpu_max + gpu_max + vk_max
 
 	// -cap: 0 = uncapped; 1..100 = percent of the estimated max; >100 = raw H/s.
 	cap_hps: f64
@@ -145,7 +165,7 @@ main :: proc() {
 	}
 	fmt.println()
 
-	posix.signal(posix.Signal(posix.SIGINT), sigint_handler)
+	install_interrupt_handler()
 
 	// Wiring.
 	ring := new(grotti.Job_Ring)
@@ -176,19 +196,27 @@ main :: proc() {
 	// the total lands on cap_hps. Uncapped (cap_hps<=0) passes through to both.
 	cpu_cap := cap_hps
 	gpu_cap := cap_hps
+	vk_cap := cap_hps
 	if cap_hps > 0 && total_max > 0 {
 		cpu_cap = cap_hps * cpu_max / total_max
 		gpu_cap = cap_hps * gpu_max / total_max
+		vk_cap = cap_hps * vk_max / total_max
 	}
 
 	miner: ^grotti.Miner
 	gpu: ^grotti.GPU_Miner
+	vk: ^grotti.VK_Miner
 	if run_cpu {
 		miner = grotti.mine_start(ring, shares, st, opts.threads, cpu_cap, &g_quit)
 	}
 	if run_cuda {
-		// GPU en2 id starts past the CPU worker ids so the two never collide.
+		// CUDA en2 id starts past the CPU worker ids so the two never collide.
 		gpu = grotti.gpu_mine_start(ring, shares, st, opts.threads, gpu_cap, &g_quit)
+	}
+	if run_vulkan {
+		// Vulkan uses a widely-separated en2 base (grotti.VK_EN2_BASE) so it never
+		// overlaps the CPU workers or a concurrent CUDA backend.
+		vk = grotti.vk_mine_start(ring, shares, st, grotti.VK_EN2_BASE, vk_cap, &g_quit)
 	}
 
 	// Live status until Ctrl-C.
@@ -227,6 +255,9 @@ main :: proc() {
 	}
 	if gpu != nil {
 		grotti.gpu_mine_stop(gpu)
+	}
+	if vk != nil {
+		grotti.vk_mine_stop(vk)
 	}
 	thread.join(ft)
 	snap := grotti.stats_snapshot(st)
@@ -276,7 +307,7 @@ print_help :: proc() {
 	fmt.println("FLAGS")
 	fmt.println("  -pool:ENDPOINT   host:port or stratum+tcp://host:port   (default pool.drivechain.info:3334)")
 	fmt.println("  -user:ADDR.RIG   stratum username <thunder-addr>.<rig>  (required)")
-	fmt.println("  -backend:LIST    cpu | cuda | cpu,cuda                   (default cpu; never auto-selects GPU)")
+	fmt.println("  -backend:LIST    cpu | cuda | vulkan | comma-combo        (default cpu; never auto-selects GPU)")
 	fmt.println("  -threads:N       CPU worker threads                     (default 4)")
 	fmt.println("  -cap:N           0=uncapped · 1-100=percent · >100=H/s   (default 500000)")
 	fmt.println("  -color:MODE      auto | always | never                  (default auto)")

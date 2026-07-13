@@ -224,7 +224,7 @@ build dependency, runs fine on a machine with no GPU at all.
 |---|---|---|
 | `cpu` | — | Pure Odin. Always available. **The default.** |
 | `cuda` | `libcuda.so.1` | NVIDIA. Best perf on GB10. First GPU backend. |
-| `vulkan` | `libvulkan.so.1` | Portable (NVIDIA/AMD/Intel). `vendor:vulkan`. Second. |
+| `vulkan` | `libvulkan.so.1` | Portable (NVIDIA/AMD/Intel). `vendor:vulkan`. **Bring-up done** — correct + integrated, ~0.86 GH/s on GB10; shader perf pending. |
 | `opencl` | `libOpenCL.so.1` | Widest reach; proven reference kernels exist. Optional. |
 
 ### Runtime loading — `core:dynlib`, not `foreign import`
@@ -302,7 +302,11 @@ just effort-per-hash:
   actual target hardware.
 - **Vulkan** is ~500 lines of setup boilerplate and a SPIR-V compute shader,
   and gives up hand-tuned `LOP3` — but runs on anything. Worth having, worth
-  having *second*.
+  having *second*. **Now done (bring-up):** `vulkan/` mirrors `cuda/`'s Engine
+  API, picks the fastest device, drains multi-hits, and is differentially tested.
+  Measured ~0.86 GH/s on GB10 vs 2.6 for CUDA — compute-bound on the un-unrolled
+  SHA schedule (glslang won't unroll it; `spirv-opt` didn't help). Perf follow-on:
+  hand-unroll the 64 rounds so the 16-word schedule is register-resident.
 - **OpenCL** is mostly interesting because the old cgminer kernels
   (`poclbm`/`phatk` lineage) are proven reference code. Optional.
 

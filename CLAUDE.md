@@ -28,7 +28,7 @@ dependency; runs on a box with no GPU.
 |---|---|---|---|
 | **v1** | `cpu` | — | Pure Odin, scalar → midstate → SIMD. **Default. Done.** |
 | **v2** | `cuda` | `libcuda.so.1` | NVIDIA / GB10. **Done — ~2.6 GH/s.** (`cuda/`) |
-| **v2** | `vulkan` | `libvulkan.so.1` | Portable. `vendor:vulkan`. Not started. |
+| **v2** | `vulkan` | `libvulkan.so.1` | Portable (NVIDIA/AMD/Intel). `vendor:vulkan`. **Bring-up done — correct, ~0.86 GH/s on GB10; shader perf pending.** (`vulkan/`) |
 | *opt* | `metal` | `Metal.framework` | macOS / Apple Silicon. Roadmap (DEVELOPMENT.md § Phase 9). |
 | *opt* | `opencl` | `libOpenCL.so.1` | Widest reach. Optional. Not started. |
 
@@ -393,7 +393,11 @@ it sidesteps the two traps below.
 | compact-bits ↔ target | inline in `target.odin` — small, self-contained, fractional-safe |
 | stratum framing + JSON-RPC | inline in `fenja.odin` / `fenja_jsonrpc.odin` |
 
-No FFI. No C. No `vendor:`. No `btcutils`, no `netutils`.
+No FFI, no C, no `vendor:` **in the core miner**. The optional GPU backends are the sole
+carve-out: `cuda/kernel.cu` (CUDA C) and `vulkan/` (`vendor:vulkan` — Odin's bundled
+bindings: types + a proc-pointer loader — plus a GLSL shader). Both GPU libraries are
+still `dlopen`'d, never `foreign import`'d, so the binary starts with no GPU library
+present and the no-runtime-dependency invariant holds. No `btcutils`, no `netutils`.
 
 **Why not `btcutils` / `netutils`?** Neither exists yet, and the miner needs so
 little from either that writing it ourselves is less work than auditing a
